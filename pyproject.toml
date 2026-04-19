@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "veritract"
 version = "0.1.0"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "rapidfuzz>=3.6.0",
     "ollama>=0.2.0",
