@@ -1,0 +1,416 @@
+{
+  "veritract": [
+    {
+      "id": "ct_001",
+      "latency": 55.091856041923165,
+      "accuracy": {
+        "drug": true,
+        "sample_size": false,
+        "outcome": true,
+        "duration": true
+      },
+      "field_acc": 0.75,
+      "grounding_rate": 1.0,
+      "quarantine_rate": 0.0,
+      "extracted": {
+        "drug": "adalimumab",
+        "outcome": "ACR20 response rate",
+        "duration": "24 weeks",
+        "sample_size": "',"
+      },
+      "quarantined": [],
+      "error": null
+    },
+    {
+      "id": "ct_002",
+      "latency": 31.79396737506613,
+      "accuracy": {
+        "drug": true,
+        "sample_size": true,
+        "outcome": true,
+        "duration": true
+      },
+      "field_acc": 1.0,
+      "grounding_rate": 1.0,
+      "quarantine_rate": 0.0,
+      "extracted": {
+        "drug": "semaglutide",
+        "outcome": "change in HbA1c from baseline",
+        "duration": "56 weeks",
+        "sample_size": ": 528"
+      },
+      "quarantined": [],
+      "error": null
+    },
+    {
+      "id": "ct_003",
+      "latency": 22.50353995896876,
+      "accuracy": {
+        "drug": true,
+        "sample_size": true,
+        "outcome": true,
+        "duration": true
+      },
+      "field_acc": 1.0,
+      "grounding_rate": 1.0,
+      "quarantine_rate": 0.0,
+      "extracted": {
+        "drug": "lisinopril vs hydrochlorothiazide",
+        "sample_size": "180 patients",
+        "outcome": "reduction in systolic blood pressure",
+        "duration": "12 months"
+      },
+      "quarantined": [],
+      "error": null
+    },
+    {
+      "id": "ct_004",
+      "latency": 26.05868975026533,
+      "accuracy": {
+        "drug": true,
+        "sample_size": true,
+        "outcome": false,
+        "duration": true
+      },
+      "field_acc": 0.75,
+      "grounding_rate": 1.0,
+      "quarantine_rate": 0.0,
+      "extracted": {
+        "drug": "fluticasone propionate inhaler 100mcg",
+        "sample_size": "95 children",
+        "outcome": "FEV1 improved by 12%",
+        "duration": "8 weeks"
+      },
+      "quarantined": [],
+      "error": null
+    },
+    {
+      "id": "ct_005",
+      "latency": 31.31863775011152,
+      "accuracy": {
+        "drug": true,
+        "sample_size": true,
+        "outcome": false,
+        "duration": true
+      },
+      "field_acc": 0.75,
+      "grounding_rate": 1.0,
+      "quarantine_rate": 0.0,
+      "extracted": {
+        "drug": "escitalopram 10mg",
+        "outcome": "HDRS score reduction",
+        "duration": "8 weeks",
+        "sample_size": "462"
+      },
+      "quarantined": [],
+      "error": null
+    },
+    {
+      "id": "ct_006",
+      "latency": 18.908162916079164,
+      "accuracy": {
+        "drug": true,
+        "sample_size": true,
+        "outcome": true,
+        "duration": true
+      },
+      "field_acc": 1.0,
+      "grounding_rate": 1.0,
+      "quarantine_rate": 0.0,
+      "extracted": {
+        "drug": "ustekinumab",
+        "sample_size": "240",
+        "outcome": "clinical remission at week 44 (53.1%)",
+        "duration": "44 weeks"
+      },
+      "quarantined": [],
+      "error": null
+    },
+    {
+      "id": "ct_007",
+      "latency": 20.395495084114373,
+      "accuracy": {
+        "drug": true,
+        "sample_size": true,
+        "outcome": true,
+        "duration": true
+      },
+      "field_acc": 1.0,
+      "grounding_rate": 1.0,
+      "quarantine_rate": 0.0,
+      "extracted": {
+        "drug": "zolpidem 10mg",
+        "sample_size": "150",
+        "outcome": "Sleep onset latency (SOL)",
+        "duration": "6 weeks"
+      },
+      "quarantined": [],
+      "error": null
+    },
+    {
+      "id": "ct_008",
+      "latency": 14.488379542250186,
+      "accuracy": {
+        "drug": true,
+        "sample_size": true,
+        "outcome": true,
+        "duration": true
+      },
+      "field_acc": 1.0,
+      "grounding_rate": 1.0,
+      "quarantine_rate": 0.0,
+      "extracted": {
+        "drug": "pembrolizumab 200mg plus chemotherapy",
+        "sample_size": "388",
+        "outcome": "Progression-free survival",
+        "duration": "up to 35 cycles"
+      },
+      "quarantined": [],
+      "error": null
+    },
+    {
+      "id": "ct_009",
+      "latency": 42.41107362508774,
+      "accuracy": {
+        "drug": true,
+        "sample_size": true,
+        "outcome": true,
+        "duration": false
+      },
+      "field_acc": 0.75,
+      "grounding_rate": 1.0,
+      "quarantine_rate": 0.0,
+      "extracted": {
+        "drug": "rosuvastatin vs atorvastatin",
+        "sample_size": "72",
+        "outcome": "LDL-cholesterol reduction",
+        "duration": "8 weeks"
+      },
+      "quarantined": [],
+      "error": null
+    },
+    {
+      "id": "ct_010",
+      "latency": 36.07785162515938,
+      "accuracy": {
+        "drug": true,
+        "sample_size": true,
+        "outcome": true,
+        "duration": true
+      },
+      "field_acc": 1.0,
+      "grounding_rate": 1.0,
+      "quarantine_rate": 0.0,
+      "extracted": {
+        "drug": "onabotulinumtoxinA 155 units",
+        "outcome": "headache days per month",
+        "duration": "52 weeks",
+        "sample_size": "300 patients"
+      },
+      "quarantined": [],
+      "error": null
+    }
+  ],
+  "langextract": [
+    {
+      "id": "ct_001",
+      "latency": 14.520650957711041,
+      "accuracy": {
+        "drug": true,
+        "sample_size": true,
+        "outcome": true,
+        "duration": true
+      },
+      "field_acc": 1.0,
+      "grounding_rate": 1.0,
+      "quarantine_rate": null,
+      "extracted": {
+        "drug": "adalimumab",
+        "sample_size": "312 patients",
+        "outcome": "ACR20 response rate",
+        "duration": "24 weeks"
+      },
+      "error": null
+    },
+    {
+      "id": "ct_002",
+      "latency": 5.621614207979292,
+      "accuracy": {
+        "drug": true,
+        "sample_size": true,
+        "outcome": true,
+        "duration": true
+      },
+      "field_acc": 1.0,
+      "grounding_rate": 1.0,
+      "quarantine_rate": null,
+      "extracted": {
+        "drug": "semaglutide",
+        "sample_size": "528 adults",
+        "outcome": "change in HbA1c from baseline",
+        "duration": "56 weeks"
+      },
+      "error": null
+    },
+    {
+      "id": "ct_003",
+      "latency": 5.366788292303681,
+      "accuracy": {
+        "drug": true,
+        "sample_size": true,
+        "outcome": true,
+        "duration": true
+      },
+      "field_acc": 1.0,
+      "grounding_rate": 1.0,
+      "quarantine_rate": null,
+      "extracted": {
+        "drug": "lisinopril",
+        "sample_size": "180 patients",
+        "outcome": "reduction in systolic blood pressure",
+        "duration": "12 months"
+      },
+      "error": null
+    },
+    {
+      "id": "ct_004",
+      "latency": 5.932407582644373,
+      "accuracy": {
+        "drug": true,
+        "sample_size": true,
+        "outcome": true,
+        "duration": true
+      },
+      "field_acc": 1.0,
+      "grounding_rate": 1.0,
+      "quarantine_rate": null,
+      "extracted": {
+        "drug": "fluticasone propionate",
+        "sample_size": "95 children",
+        "outcome": "forced expiratory volume in 1 second (FEV1) and symptom-free days",
+        "duration": "8 weeks"
+      },
+      "error": null
+    },
+    {
+      "id": "ct_005",
+      "latency": 5.757598583120853,
+      "accuracy": {
+        "drug": true,
+        "sample_size": true,
+        "outcome": true,
+        "duration": true
+      },
+      "field_acc": 1.0,
+      "grounding_rate": 1.0,
+      "quarantine_rate": null,
+      "extracted": {
+        "drug": "escitalopram",
+        "sample_size": "Four hundred sixty-two patients",
+        "outcome": "Hamilton Depression Rating Scale (HDRS) score",
+        "duration": "8 weeks"
+      },
+      "error": null
+    },
+    {
+      "id": "ct_006",
+      "latency": 5.768272082787007,
+      "accuracy": {
+        "drug": true,
+        "sample_size": true,
+        "outcome": true,
+        "duration": true
+      },
+      "field_acc": 1.0,
+      "grounding_rate": 1.0,
+      "quarantine_rate": null,
+      "extracted": {
+        "drug": "ustekinumab",
+        "sample_size": "240 patients",
+        "outcome": "clinical remission at week 44",
+        "duration": "44 weeks"
+      },
+      "error": null
+    },
+    {
+      "id": "ct_007",
+      "latency": 5.253889459185302,
+      "accuracy": {
+        "drug": true,
+        "sample_size": true,
+        "outcome": true,
+        "duration": true
+      },
+      "field_acc": 1.0,
+      "grounding_rate": 1.0,
+      "quarantine_rate": null,
+      "extracted": {
+        "drug": "zolpidem",
+        "sample_size": "150 adults",
+        "outcome": "Sleep onset latency (SOL)",
+        "duration": "6 weeks"
+      },
+      "error": null
+    },
+    {
+      "id": "ct_008",
+      "latency": 5.354995083063841,
+      "accuracy": {
+        "drug": true,
+        "sample_size": true,
+        "outcome": true,
+        "duration": true
+      },
+      "field_acc": 1.0,
+      "grounding_rate": 1.0,
+      "quarantine_rate": null,
+      "extracted": {
+        "drug": "pembrolizumab",
+        "sample_size": "388 patients",
+        "outcome": "Progression-free survival",
+        "duration": "up to 35 cycles"
+      },
+      "error": null
+    },
+    {
+      "id": "ct_009",
+      "latency": 5.664722083136439,
+      "accuracy": {
+        "drug": true,
+        "sample_size": true,
+        "outcome": true,
+        "duration": true
+      },
+      "field_acc": 1.0,
+      "grounding_rate": 1.0,
+      "quarantine_rate": null,
+      "extracted": {
+        "drug": "rosuvastatin",
+        "sample_size": "72 healthy volunteers",
+        "outcome": "LDL-cholesterol reduction",
+        "duration": "two 4-week periods with a 2-week washout"
+      },
+      "error": null
+    },
+    {
+      "id": "ct_010",
+      "latency": 5.396664916072041,
+      "accuracy": {
+        "drug": true,
+        "sample_size": true,
+        "outcome": true,
+        "duration": true
+      },
+      "field_acc": 1.0,
+      "grounding_rate": 1.0,
+      "quarantine_rate": null,
+      "extracted": {
+        "drug": "onabotulinumtoxinA",
+        "sample_size": "Three hundred patients",
+        "outcome": "frequency of headache days per month",
+        "duration": "52 weeks"
+      },
+      "error": null
+    }
+  ]
+}
