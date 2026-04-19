@@ -61,7 +61,7 @@ class ExtractionGrounder:
                 )
             return None
 
-        overall_score = fuzz.partial_ratio(value_lower, source_lower)
+        overall_score = fuzz.token_set_ratio(value_lower, source_lower)
         if overall_score < threshold:
             return None
 

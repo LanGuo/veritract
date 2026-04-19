@@ -65,14 +65,16 @@ def test_source_type_propagated_to_span():
 
 def test_custom_threshold_strict_quarantines_fuzzy():
     grounder_strict = ExtractionGrounder(thresholds={"text": 99})
-    value = "HbA1c reduction metformin"
+    # Value with tokens not meaningfully in source → high threshold rejects it
+    value = "fasting glucose insulin resistance"
     result = grounder_strict.ground_field("x", value, SOURCE, source_type="text")
     assert result is None
 
 
 def test_custom_threshold_lenient_passes_fuzzy():
     grounder_lenient = ExtractionGrounder(thresholds={"text": 10})
-    value = "HbA1c reduction metformin"
+    # Same value passes with a very lenient threshold
+    value = "fasting glucose insulin resistance"
     result = grounder_lenient.ground_field("x", value, SOURCE, source_type="text")
     assert result is not None
 
