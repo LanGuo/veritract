@@ -64,3 +64,12 @@ def test_extraction_result_provenance():
 def test_extraction_result_empty():
     result = ExtractionResult(extracted={}, quarantined=[])
     assert result.provenance == []
+
+
+def test_public_api_importable():
+    from veritract import extract, LLMClient, MockLLM, ExtractionResult
+    from veritract import Span, GroundedField, QuarantinedField, load_images_b64
+    assert callable(extract)
+    assert callable(LLMClient)
+    assert callable(MockLLM)
+    assert callable(load_images_b64)
