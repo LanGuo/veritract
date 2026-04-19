@@ -36,7 +36,7 @@ class LLMClient:
                 return json.loads(content) if schema else {"text": content}
             except json.JSONDecodeError as e:
                 last_error = e
-                raw_content = response["message"]["content"]
+                raw_content = content  # already bound before json.loads raised
                 messages = messages + [
                     {"role": "assistant", "content": raw_content},
                     {"role": "user", "content": "Your response was not valid JSON. Reply with valid JSON only."},
