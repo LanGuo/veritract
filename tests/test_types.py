@@ -30,7 +30,7 @@ def test_span_doc_id_optional():
 
 
 def test_grounded_field():
-    gf = GroundedField(value="42 patients", span=None, confidence=100.0, status="grounded")
+    gf = GroundedField(value="42 patients", span=None, confidence=100.0)
     assert gf["value"] == "42 patients"
     assert gf["span"] is None
 
@@ -52,8 +52,8 @@ def test_extraction_result_provenance():
     )
     result = ExtractionResult(
         extracted={
-            "field_a": GroundedField(value="foo", span=span, confidence=100.0, status="grounded"),
-            "field_b": GroundedField(value="bar", span=None, confidence=80.0, status="grounded"),
+            "field_a": GroundedField(value="foo", span=span, confidence=100.0),
+            "field_b": GroundedField(value="bar", span=None, confidence=80.0),
         },
         quarantined=[],
     )

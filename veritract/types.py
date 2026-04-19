@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Literal
 from typing_extensions import TypedDict
@@ -16,7 +18,6 @@ class GroundedField(TypedDict):
     value: str
     span: Span | None
     confidence: float
-    status: Literal["grounded", "quarantined"]
 
 
 class QuarantinedField(TypedDict):
