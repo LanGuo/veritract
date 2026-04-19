@@ -1,4 +1,3 @@
-import pytest
 from veritract.grounding import ExtractionGrounder
 from veritract.types import GroundedField, QuarantinedField
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 from rapidfuzz import fuzz
 from veritract.types import Span, GroundedField, QuarantinedField
 
@@ -67,10 +68,11 @@ class ExtractionGrounder:
 
         sentences = re.split(r"(?<=[.!?])\s+", source_text)
         offsets: list[int] = []
-        pos = 0
+        search_from = 0
         for s in sentences:
-            offsets.append(pos)
-            pos += len(s) + 1
+            idx = source_text.find(s, search_from)
+            offsets.append(idx if idx != -1 else search_from)
+            search_from = (idx + len(s)) if idx != -1 else search_from
 
         best_score = 0.0
         best_start = 0
@@ -100,7 +102,7 @@ class ExtractionGrounder:
 
     def ground_extracted_data(
         self,
-        extracted_data: dict,
+        extracted_data: dict[str, Any],
         source_text: str,
         doc_id: str | None = None,
         source_type: str = "text",
@@ -115,7 +117,7 @@ class ExtractionGrounder:
             if result is not None:
                 grounded[field_name] = result
             else:
-                score = fuzz.partial_ratio(value.lower(), source_text.lower())
+                score = fuzz.token_set_ratio(value.lower(), source_text.lower())
                 quarantined.append(QuarantinedField(
                     field_name=field_name,
                     value=value,
