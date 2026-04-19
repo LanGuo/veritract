@@ -6,14 +6,34 @@ build-backend = "hatchling.build"
 name = "veritract"
 version = "0.1.0"
 requires-python = ">=3.10"
+description = "Verified extraction — truth-anchored LLM structured output"
+license = { text = "MIT" }
+readme = "README.md"
+keywords = ["llm", "extraction", "structured-output", "grounding", "provenance", "nlp"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Text Processing :: Linguistic",
+]
 dependencies = [
     "rapidfuzz>=3.6.0",
     "ollama>=0.2.0",
     "typing_extensions>=4.0.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/languo/veritract"
+Repository = "https://github.com/languo/veritract"
+Issues = "https://github.com/languo/veritract/issues"
+
 [project.optional-dependencies]
-dev = ["pytest>=8.0.0"]
+dev = ["pytest>=8.0.0", "hatch>=1.12.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
