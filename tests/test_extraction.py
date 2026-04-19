@@ -1,7 +1,6 @@
 import pytest
 from veritract.extraction import extract, _build_prompt, _locate_span
 from veritract.llm import MockLLM
-from veritract.types import Span
 
 
 SOURCE = (

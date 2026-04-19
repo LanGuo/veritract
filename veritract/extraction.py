@@ -129,7 +129,9 @@ def extract(
             output format (Ollama ``format=`` param for GBNF constrained decoding).
         llm: Any object with a ``chat(messages, schema=None, think=False)`` method.
             Use ``LLMClient`` for Ollama or ``MockLLM`` for tests.
-        prompt: Custom extraction prompt. If None, generated from schema field names.
+        prompt: Custom extraction prompt. If None, a prompt is generated from schema
+            field names and the source text (truncated to 6000 chars). If provided,
+            used verbatim — the caller is responsible for embedding the source text.
         images: Optional list of base64-encoded PNG/JPEG strings for multimodal extraction.
         doc_id: Optional document identifier stored in provenance spans.
         source_type: Label for the source type, used for adaptive grounding thresholds.
