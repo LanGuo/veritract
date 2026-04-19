@@ -1,8 +1,15 @@
 from __future__ import annotations
 
 import base64
+import re
 from veritract.types import Span, GroundedField, QuarantinedField, ExtractionResult
 from veritract.grounding import ExtractionGrounder
+
+# Matches at least two consecutive word characters (letters, digits, _).
+# Values that don't contain this are GBNF artifacts (pure punctuation/whitespace).
+_HAS_WORD = re.compile(r"\w{2,}")
+# Strip leading/trailing non-word noise that GBNF sometimes prepends/appends.
+_STRIP_NOISE = re.compile(r'^[\s\W]+|[\s,.:;"\']+$')
 
 _LLM_GROUND_CONFIDENCE = 80.0
 
@@ -96,6 +103,32 @@ def _auto_llm_ground(
     return promoted, remaining
 
 
+def _sanitize_raw_values(
+    raw: dict,
+) -> tuple[dict[str, str], list[QuarantinedField]]:
+    """Strip noise from GBNF-decoded strings; quarantine values with no word content.
+
+    GBNF constrained decoding guarantees syntactically valid JSON but can produce
+    strings that are pure punctuation (e.g. \"','\") or have leading JSON artifacts
+    (e.g. \": 528\"). Strip the noise first; quarantine if nothing meaningful remains.
+    """
+    valid: dict[str, str] = {}
+    garbage: list[QuarantinedField] = []
+    for k, v in raw.items():
+        if not isinstance(v, str):
+            continue
+        cleaned = _STRIP_NOISE.sub("", v)
+        if _HAS_WORD.search(cleaned):
+            valid[k] = cleaned
+        else:
+            garbage.append(QuarantinedField(
+                field_name=k,
+                value=v,
+                reason=f"invalid extraction: no meaningful content in {v!r}",
+            ))
+    return valid, garbage
+
+
 def load_images_b64(paths: list[str], max_images: int = 8) -> list[str]:
     """Read PNG/JPEG files and return base64-encoded strings for multimodal LLM calls."""
     images: list[str] = []
@@ -149,22 +182,24 @@ def extract(
         message["images"] = images
 
     raw = llm.chat([message], schema=schema)
+    raw_strings, garbage_fields = _sanitize_raw_values(raw)
 
     if not grounding:
         extracted = {
             k: GroundedField(value=v, span=None, confidence=100.0)
-            for k, v in raw.items()
-            if isinstance(v, str)
+            for k, v in raw_strings.items()
         }
-        return ExtractionResult(extracted=extracted, quarantined=[])
+        return ExtractionResult(extracted=extracted, quarantined=garbage_fields)
 
     grounder = ExtractionGrounder(thresholds=thresholds)
     grounded, quarantined_fields = grounder.ground_extracted_data(
-        {k: v for k, v in raw.items() if isinstance(v, str)},
+        raw_strings,
         source_text=text,
         doc_id=doc_id,
         source_type=source_type,
     )
+
+    quarantined_fields = garbage_fields + quarantined_fields
 
     if auto_reground and quarantined_fields:
         promoted, still_quarantined = _auto_llm_ground(

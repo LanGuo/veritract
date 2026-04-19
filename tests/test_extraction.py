@@ -1,5 +1,5 @@
 import pytest
-from veritract.extraction import extract, _build_prompt, _locate_span
+from veritract.extraction import extract, _build_prompt, _locate_span, _sanitize_raw_values
 from veritract.llm import MockLLM
 
 
@@ -167,3 +167,47 @@ def test_extract_custom_prompt_used():
         prompt=f"CUSTOM_MARKER extract fields. Text: {SOURCE}",
     )
     assert "sample_size" in result.extracted
+
+
+# --- _sanitize_raw_values ---
+
+def test_sanitize_strips_leading_noise():
+    valid, garbage = _sanitize_raw_values({"sample_size": ": 528 patients"})
+    assert valid["sample_size"] == "528 patients"
+    assert garbage == []
+
+
+def test_sanitize_quarantines_punctuation_only():
+    valid, garbage = _sanitize_raw_values({"sample_size": "','"})
+    assert "sample_size" not in valid
+    assert any(q["field_name"] == "sample_size" for q in garbage)
+
+
+def test_sanitize_quarantines_empty_string():
+    valid, garbage = _sanitize_raw_values({"field": ""})
+    assert "field" not in valid
+    assert any(q["field_name"] == "field" for q in garbage)
+
+
+def test_sanitize_passes_normal_value():
+    valid, garbage = _sanitize_raw_values({"drug": "metformin 500mg"})
+    assert valid["drug"] == "metformin 500mg"
+    assert garbage == []
+
+
+def test_sanitize_skips_non_strings():
+    valid, garbage = _sanitize_raw_values({"count": 42, "name": "valid"})
+    assert "count" not in valid
+    assert valid["name"] == "valid"
+
+
+def test_extract_garbage_value_quarantined():
+    llm = MockLLM()
+    llm.register("sample_size", {
+        "sample_size": "','" ,
+        "intervention": "metformin 500mg twice daily",
+        "primary_outcome": "HbA1c reduction at 12 months",
+    })
+    result = extract(SOURCE, SCHEMA, llm, auto_reground=False)
+    assert "sample_size" not in result.extracted
+    assert any(q["field_name"] == "sample_size" for q in result.quarantined)
