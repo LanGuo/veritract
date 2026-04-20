@@ -104,10 +104,10 @@ def _fetch_abstract(pmid: str) -> str | None:
         )
         resp.raise_for_status()
         # Extract AbstractText from XML without requiring lxml
-        import re
+        import re, html
         texts = re.findall(r"<AbstractText[^>]*>(.*?)</AbstractText>", resp.text, re.DOTALL)
         if texts:
-            return " ".join(t.strip() for t in texts)
+            return html.unescape(" ".join(t.strip() for t in texts))
     except Exception:
         pass
     return None

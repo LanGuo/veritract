@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -33,18 +34,45 @@ from veritract import extract as vt_extract, LLMClient  # noqa: E402
 
 _FUZZY_THRESHOLD = 70  # token_set_ratio threshold for "correct" answer
 
+# Fields excluded from the primary accuracy metric with reasons:
+#   duration  — CT.gov timeFrame phrasing rarely matches abstract phrasing
+#               (e.g. "from randomisation until death" vs "28-day cycles")
+UNSCORED_FIELDS = {"duration"}
+
 # ---------------------------------------------------------------------------
 # Accuracy helpers
 # ---------------------------------------------------------------------------
 
-def _score(predicted: str, expected: str) -> float:
-    return fuzz.token_set_ratio(predicted.lower(), expected.lower())
+def _extract_number(s: str) -> int | None:
+    """Return the first integer found in s, or None."""
+    m = re.search(r"\d+", s.replace(",", ""))
+    return int(m.group()) if m else None
 
 
-def _accuracy(extracted: dict[str, str], ground_truth: dict[str, str]) -> dict[str, bool]:
+def _score_field(field: str, predicted: str, expected: str) -> bool:
+    """Field-specific scoring logic."""
+    if field == "sample_size":
+        # CT.gov stores enrolled count; abstract often reports analyzed N.
+        # Accept if the extracted number is within 15% of the GT number,
+        # or if the GT number appears verbatim in the extracted string.
+        gt_n = _extract_number(expected)
+        ex_n = _extract_number(predicted)
+        if gt_n and ex_n:
+            return abs(gt_n - ex_n) / gt_n <= 0.15
+        return False
+    # Default: fuzzy token match
+    return fuzz.token_set_ratio(predicted.lower(), expected.lower()) >= _FUZZY_THRESHOLD
+
+
+def _accuracy(
+    extracted: dict[str, str],
+    ground_truth: dict[str, str],
+    skip: set[str] = UNSCORED_FIELDS,
+) -> dict[str, bool]:
     return {
-        field: _score(extracted.get(field, ""), ground_truth[field]) >= _FUZZY_THRESHOLD
+        field: _score_field(field, extracted.get(field, ""), ground_truth[field])
         for field in ground_truth
+        if field not in skip
     }
 
 
@@ -71,7 +99,7 @@ def run_veritract(
                 "id": s["id"],
                 "latency": elapsed,
                 "accuracy": acc,
-                "field_acc": sum(acc.values()) / len(acc),
+                "field_acc": sum(acc.values()) / len(acc) if acc else 0.0,
                 "grounding_rate": grounded / total_extracted if total_extracted else 0.0,
                 "quarantine_rate": len(result.quarantined) / len(fields),
                 "extracted": extracted_vals,
@@ -136,6 +164,7 @@ def run_langextract(samples: list[dict], model: str, schema: dict) -> list[dict]
             extracted_vals: dict[str, str] = {}
             grounded_count = 0
             fields = list(schema.get("properties", {}).keys())
+            raw_extraction_count = len(doc.extractions) if doc and doc.extractions else 0
             if doc and doc.extractions:
                 for ext in doc.extractions:
                     cls = (ext.extraction_class or "").lower()
@@ -146,15 +175,18 @@ def run_langextract(samples: list[dict], model: str, schema: dict) -> list[dict]
 
             acc = _accuracy(extracted_vals, s["ground_truth"])
             total = len(extracted_vals) or 1
+            # Surface silent failures: model returned nothing (null extraction_text
+            # causes LangExtract to skip with "schema error" warning)
+            extraction_failed = raw_extraction_count == 0
             results.append({
                 "id": s["id"],
                 "latency": elapsed,
                 "accuracy": acc,
-                "field_acc": sum(acc.values()) / len(acc),
+                "field_acc": sum(acc.values()) / len(acc) if acc else 0.0,
                 "grounding_rate": grounded_count / total,
-                "quarantine_rate": None,  # LangExtract has no quarantine concept
+                "quarantine_rate": None,
                 "extracted": extracted_vals,
-                "error": None,
+                "error": "extraction_failed: model returned no valid extractions" if extraction_failed else None,
             })
         except Exception as e:
             elapsed = time.perf_counter() - t0
@@ -197,11 +229,19 @@ def print_summary(name: str, results: list[dict], fields: list[str] | None = Non
     if any(r.get("quarantine_rate") is not None for r in ok):
         qr = [r["quarantine_rate"] for r in ok if r.get("quarantine_rate") is not None]
         print(f"  Quarantine rate:   {_mean(qr)*100:.1f}%")
-    print(f"\n  Per-field accuracy:")
-    for f in all_fields:
+    scored = [f for f in all_fields if f not in UNSCORED_FIELDS]
+    unscored = [f for f in all_fields if f in UNSCORED_FIELDS]
+    print(f"\n  Per-field accuracy (scored):")
+    for f in scored:
         vals = per_field_acc.get(f, [])
         if vals:
             print(f"    {f:<20} {sum(vals)/len(vals)*100:.0f}%")
+    if unscored:
+        print(f"  Unscored fields (shown for reference):")
+        for f in unscored:
+            vals = per_field_acc.get(f, [])
+            if vals:
+                print(f"    {f:<20} {sum(vals)/len(vals)*100:.0f}%  (not in accuracy metric)")
 
     errors = [r for r in results if r.get("error")]
     if errors:
