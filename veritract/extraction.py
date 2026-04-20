@@ -29,7 +29,10 @@ def _build_prompt(text: str, schema: dict, prompt: str | None) -> str:
     fields = list(schema.get("properties", {}).keys())
     fields_str = ", ".join(fields)
     return (
-        f"Extract the following fields from the text below. "
+        f"Extract the following fields from the text below.\n"
+        f"Rules:\n"
+        f"- Copy the exact verbatim phrase from the text. Do not paraphrase, abbreviate, or synthesise.\n"
+        f"- If a field is not present in the text, use an empty string.\n"
         f"Return JSON with exactly these fields: {fields_str}.\n\n"
         f"Text:\n{text[:6000]}"
     )
