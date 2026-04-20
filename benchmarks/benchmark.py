@@ -27,7 +27,8 @@ from rapidfuzz import fuzz
 # Add parent dir so the local veritract package is importable
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from benchmarks.dataset import SAMPLES, SCHEMA, FIELDS  # noqa: E402
+from benchmarks.dataset import SAMPLES as SYNTHETIC_SAMPLES, SCHEMA as SYNTHETIC_SCHEMA, FIELDS as SYNTHETIC_FIELDS  # noqa: E402
+from benchmarks.clinicaltrials_dataset import get_samples as get_ct_samples, SCHEMA as CT_SCHEMA, FIELDS as CT_FIELDS  # noqa: E402
 from veritract import extract as vt_extract, LLMClient  # noqa: E402
 
 _FUZZY_THRESHOLD = 70  # token_set_ratio threshold for "correct" answer
@@ -51,13 +52,16 @@ def _accuracy(extracted: dict[str, str], ground_truth: dict[str, str]) -> dict[s
 # veritract runner
 # ---------------------------------------------------------------------------
 
-def run_veritract(samples: list[dict], model: str, auto_reground: bool = True) -> list[dict]:
+def run_veritract(
+    samples: list[dict], model: str, schema: dict, auto_reground: bool = True
+) -> list[dict]:
     llm = LLMClient(model=model)
+    fields = list(schema.get("properties", {}).keys())
     results = []
     for s in samples:
         t0 = time.perf_counter()
         try:
-            result = vt_extract(s["text"], SCHEMA, llm, auto_reground=auto_reground)
+            result = vt_extract(s["text"], schema, llm, auto_reground=auto_reground)
             elapsed = time.perf_counter() - t0
             extracted_vals = {k: v["value"] for k, v in result.extracted.items()}
             acc = _accuracy(extracted_vals, s["ground_truth"])
@@ -69,7 +73,7 @@ def run_veritract(samples: list[dict], model: str, auto_reground: bool = True) -
                 "accuracy": acc,
                 "field_acc": sum(acc.values()) / len(acc),
                 "grounding_rate": grounded / total_extracted if total_extracted else 0.0,
-                "quarantine_rate": len(result.quarantined) / len(FIELDS),
+                "quarantine_rate": len(result.quarantined) / len(fields),
                 "extracted": extracted_vals,
                 "quarantined": [q["field_name"] for q in result.quarantined],
                 "error": None,
@@ -84,7 +88,7 @@ def run_veritract(samples: list[dict], model: str, auto_reground: bool = True) -
 # LangExtract runner
 # ---------------------------------------------------------------------------
 
-def run_langextract(samples: list[dict], model: str) -> list[dict]:
+def run_langextract(samples: list[dict], model: str, schema: dict) -> list[dict]:
     try:
         import langextract as lx
         from langextract.data import ExampleData, Extraction
@@ -131,10 +135,11 @@ def run_langextract(samples: list[dict], model: str) -> list[dict]:
             doc = docs if not isinstance(docs, list) else (docs[0] if docs else None)
             extracted_vals: dict[str, str] = {}
             grounded_count = 0
+            fields = list(schema.get("properties", {}).keys())
             if doc and doc.extractions:
                 for ext in doc.extractions:
                     cls = (ext.extraction_class or "").lower()
-                    if cls in FIELDS and cls not in extracted_vals:
+                    if cls in fields and cls not in extracted_vals:
                         extracted_vals[cls] = ext.extraction_text or ""
                         if ext.char_interval and ext.char_interval.start_pos is not None:
                             grounded_count += 1
@@ -165,7 +170,7 @@ def _mean(vals: list[float]) -> float:
     return sum(vals) / len(vals) if vals else 0.0
 
 
-def print_summary(name: str, results: list[dict]) -> dict:
+def print_summary(name: str, results: list[dict], fields: list[str] | None = None) -> dict:
     ok = [r for r in results if not r.get("error")]
     if not ok:
         print(f"\n{name}: no successful results")
@@ -175,10 +180,11 @@ def print_summary(name: str, results: list[dict]) -> dict:
     field_accs = [r["field_acc"] for r in ok]
     grounding_rates = [r["grounding_rate"] for r in ok]
 
-    per_field_acc: dict[str, list[bool]] = {f: [] for f in FIELDS}
+    all_fields = fields or sorted({f for r in ok for f in r.get("accuracy", {})})
+    per_field_acc: dict[str, list[bool]] = {f: [] for f in all_fields}
     for r in ok:
         for f, correct in r.get("accuracy", {}).items():
-            per_field_acc[f].append(correct)
+            per_field_acc.setdefault(f, []).append(correct)
 
     print(f"\n{'='*50}")
     print(f"  {name}")
@@ -192,8 +198,8 @@ def print_summary(name: str, results: list[dict]) -> dict:
         qr = [r["quarantine_rate"] for r in ok if r.get("quarantine_rate") is not None]
         print(f"  Quarantine rate:   {_mean(qr)*100:.1f}%")
     print(f"\n  Per-field accuracy:")
-    for f in FIELDS:
-        vals = per_field_acc[f]
+    for f in all_fields:
+        vals = per_field_acc.get(f, [])
         if vals:
             print(f"    {f:<20} {sum(vals)/len(vals)*100:.0f}%")
 
@@ -243,24 +249,40 @@ def main() -> None:
     parser.add_argument("--no-reground", action="store_true", help="Disable veritract auto_reground")
     parser.add_argument("--samples", type=int, default=0, help="Limit to N samples (0=all)")
     parser.add_argument("--out", default="", help="Save JSON results to this file")
+    parser.add_argument(
+        "--dataset", choices=["synthetic", "clinicaltrials"], default="clinicaltrials",
+        help="Dataset to use (default: clinicaltrials — requires --build first)",
+    )
     args = parser.parse_args()
 
-    samples = SAMPLES[:args.samples] if args.samples else SAMPLES
+    if args.dataset == "clinicaltrials":
+        try:
+            all_samples = get_ct_samples()
+            schema = CT_SCHEMA
+        except FileNotFoundError as e:
+            print(f"Error: {e}")
+            sys.exit(1)
+    else:
+        all_samples = SYNTHETIC_SAMPLES
+        schema = SYNTHETIC_SCHEMA
+
+    samples = all_samples[:args.samples] if args.samples else all_samples
 
     print(f"Benchmark: veritract vs LangExtract")
-    print(f"Model: {args.model} | Samples: {len(samples)}")
+    print(f"Model: {args.model} | Dataset: {args.dataset} | Samples: {len(samples)}")
     print(f"{'='*50}")
 
     print("\nRunning veritract...")
-    vt_results = run_veritract(samples, args.model, auto_reground=not args.no_reground)
-    vt_summary = print_summary("veritract", vt_results)
+    vt_results = run_veritract(samples, args.model, schema, auto_reground=not args.no_reground)
+    fields = list(schema.get("properties", {}).keys())
+    vt_summary = print_summary("veritract", vt_results, fields)
 
     lx_results: list[dict] = []
     lx_summary: dict = {}
     if not args.no_langextract:
         print("\nRunning LangExtract...")
-        lx_results = run_langextract(samples, args.model)
-        lx_summary = print_summary("LangExtract", lx_results)
+        lx_results = run_langextract(samples, args.model, schema)
+        lx_summary = print_summary("LangExtract", lx_results, fields)
 
     print_comparison(vt_summary, lx_summary)
 
