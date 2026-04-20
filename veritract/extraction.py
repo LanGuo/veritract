@@ -9,7 +9,7 @@ from veritract.grounding import ExtractionGrounder
 # Values that don't contain this are GBNF artifacts (pure punctuation/whitespace).
 _HAS_WORD = re.compile(r"\w{2,}")
 # Strip leading/trailing non-word noise that GBNF sometimes prepends/appends.
-_STRIP_NOISE = re.compile(r'^[\s\W]+|[\s,.:;"\']+$')
+_STRIP_NOISE = re.compile(r'^[\s\W]+|[\s\W]+$')
 
 _LLM_GROUND_CONFIDENCE = 80.0
 

@@ -1,0 +1,218 @@
+{
+  "veritract": [
+    {
+      "id": "NCT05197556",
+      "latency": 101.3805950419046,
+      "accuracy": {
+        "drug": true,
+        "sample_size": false,
+        "outcome": true,
+        "duration": false
+      },
+      "field_acc": 0.5,
+      "grounding_rate": 0.75,
+      "quarantine_rate": 0.0,
+      "extracted": {
+        "drug": "HSG4112",
+        "outcome": "Change in body weight (kg) from baseline to the end of treatment",
+        "duration": "16-week",
+        "sample_size": "Not specified"
+      },
+      "quarantined": [],
+      "error": null
+    },
+    {
+      "id": "NCT04607122",
+      "latency": 146.9225400001742,
+      "accuracy": {
+        "drug": true,
+        "sample_size": false,
+        "outcome": false,
+        "duration": false
+      },
+      "field_acc": 0.25,
+      "grounding_rate": 1.0,
+      "quarantine_rate": 0.0,
+      "extracted": {
+        "drug": "landiolol",
+        "sample_size": "318",
+        "duration": "24 h",
+        "outcome": "POAF (Postoperative atrial fibrillation) incidence"
+      },
+      "quarantined": [],
+      "error": null
+    },
+    {
+      "id": "NCT03206151",
+      "latency": 61.552473292220384,
+      "accuracy": {
+        "drug": false,
+        "sample_size": false,
+        "outcome": false,
+        "duration": false
+      },
+      "field_acc": 0.0,
+      "grounding_rate": 1.0,
+      "quarantine_rate": 0.0,
+      "extracted": {
+        "drug": "cetuximab &#x3b2; plus FOLFIRI",
+        "sample_size": "505",
+        "outcome": "improved median PFS (13.1 vs. 9.6 months), median OS (28.3 vs. 23.1 months), and ORR (69.1% vs. 42.3%)",
+        "duration": "8.7 months"
+      },
+      "quarantined": [],
+      "error": null
+    },
+    {
+      "id": "NCT03976401",
+      "latency": 91.07075212476775,
+      "accuracy": {
+        "drug": false,
+        "sample_size": false,
+        "outcome": false,
+        "duration": false
+      },
+      "field_acc": 0.0,
+      "grounding_rate": 1.0,
+      "quarantine_rate": 0.25,
+      "extracted": {
+        "sample_size": "150",
+        "outcome": "resolution of steatohepatitis",
+        "drug": "therapeutic intervention"
+      },
+      "quarantined": [
+        "duration"
+      ],
+      "error": null
+    },
+    {
+      "id": "NCT03776812",
+      "latency": 32.12761391606182,
+      "accuracy": {
+        "drug": true,
+        "sample_size": false,
+        "outcome": true,
+        "duration": false
+      },
+      "field_acc": 0.5,
+      "grounding_rate": 1.0,
+      "quarantine_rate": 0.0,
+      "extracted": {
+        "drug": "intermittently dosed relacorilant + nab-paclitaxel",
+        "sample_size": "NCT03776812",
+        "outcome": "improved progression-free survival, duration of response, and overall survival (QALYs)",
+        "duration": "5-year time horizon"
+      },
+      "quarantined": [],
+      "error": null
+    },
+    {
+      "id": "NCT02314819",
+      "latency": 32.0486120833084,
+      "accuracy": {
+        "drug": true,
+        "sample_size": true,
+        "outcome": true,
+        "duration": false
+      },
+      "field_acc": 0.75,
+      "grounding_rate": 1.0,
+      "quarantine_rate": 0.0,
+      "extracted": {
+        "drug": "fruquintinib",
+        "sample_size": "416",
+        "outcome": "overall survival",
+        "duration": "21 days followed by 7 days off in 28-day cycles"
+      },
+      "quarantined": [],
+      "error": null
+    },
+    {
+      "id": "NCT00473330",
+      "latency": 71.102461125236,
+      "accuracy": {
+        "drug": true,
+        "sample_size": false,
+        "outcome": false,
+        "duration": false
+      },
+      "field_acc": 0.25,
+      "grounding_rate": 1.0,
+      "quarantine_rate": 0.0,
+      "extracted": {
+        "drug": "ranibizumab",
+        "outcome": "clinically meaningful change (improvement) on the 25-item National Eye Institute Visual Function Questionnaire (NEI VFQ-25)",
+        "sample_size": "N = 759 (RIDE N=382; RISE N=377)",
+        "duration": "24 months"
+      },
+      "quarantined": [],
+      "error": null
+    },
+    {
+      "id": "NCT01778907",
+      "latency": 72.44149387534708,
+      "accuracy": {
+        "drug": false,
+        "sample_size": false,
+        "outcome": false,
+        "duration": false
+      },
+      "field_acc": 0.0,
+      "grounding_rate": 1.0,
+      "quarantine_rate": 0.25,
+      "extracted": {
+        "drug": "nortriptyline and venlafaxine",
+        "outcome": "time needed to obtain an adequate blood level of the antidepressant drug",
+        "duration": "Not specified"
+      },
+      "quarantined": [
+        "sample_size"
+      ],
+      "error": null
+    },
+    {
+      "id": "NCT02316756",
+      "latency": 30.823008500039577,
+      "accuracy": {
+        "drug": true,
+        "sample_size": false,
+        "outcome": false,
+        "duration": false
+      },
+      "field_acc": 0.25,
+      "grounding_rate": 0.75,
+      "quarantine_rate": 0.0,
+      "extracted": {
+        "drug": "PF-06648671",
+        "sample_size": "120",
+        "outcome": "Decreased A\u03b242 and A\u03b240 concentrations in CSF, with greater effects on A\u03b242, and increased A\u03b237 and A\u03b238 levels, particularly A\u03b237",
+        "duration": "14 days"
+      },
+      "quarantined": [],
+      "error": null
+    },
+    {
+      "id": "NCT03976102",
+      "latency": 51.336325500160456,
+      "accuracy": {
+        "drug": true,
+        "sample_size": false,
+        "outcome": true,
+        "duration": false
+      },
+      "field_acc": 0.5,
+      "grounding_rate": 1.0,
+      "quarantine_rate": 0.25,
+      "extracted": {
+        "drug": "DRL_RI",
+        "outcome": "best overall response rate (BORR)",
+        "duration": "up to Week 28"
+      },
+      "quarantined": [
+        "sample_size"
+      ],
+      "error": null
+    }
+  ],
+  "langextract": []
+}
