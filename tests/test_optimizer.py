@@ -1,5 +1,6 @@
 import pytest
-from veritract.optimizer import _score_results
+from veritract.optimizer import _score_results, _mutate_prompt
+from veritract.llm import MockLLM
 
 
 SCHEMA = {
@@ -59,3 +60,28 @@ def test_score_unsupervised_quarantine_hurts():
     score = _score_results(extracted, quarantined, gt=None)
     # 0 grounded out of 1 total
     assert score == pytest.approx(0.0)
+
+
+def test_mutate_prompt_returns_string():
+    llm = MockLLM()
+    llm.register("Improve the extraction prompt", {"text": "New improved prompt text."})
+    result = _mutate_prompt(
+        current_prompt="Extract drug and sample_size.",
+        schema={"type": "object", "properties": {"drug": {"type": "string"}, "sample_size": {"type": "string"}}, "required": ["drug", "sample_size"]},
+        failures=[{"field": "drug", "extracted": "aspirin", "expected": "metformin 500mg"}],
+        llm=llm,
+    )
+    assert isinstance(result, str)
+    assert len(result) > 0
+
+
+def test_mutate_prompt_falls_back_on_llm_error():
+    llm = MockLLM()
+    # No registered response → MockLLM raises ValueError → should fall back to current_prompt
+    result = _mutate_prompt(
+        current_prompt="My prompt.",
+        schema={"type": "object", "properties": {"drug": {"type": "string"}}, "required": ["drug"]},
+        failures=[],
+        llm=llm,
+    )
+    assert result == "My prompt."
