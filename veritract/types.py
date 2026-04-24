@@ -34,3 +34,16 @@ class ExtractionResult:
     @property
     def provenance(self) -> list[Span]:
         return [f["span"] for f in self.extracted.values() if f["span"] is not None]
+
+
+@dataclass
+class RawExtractionResult:
+    """LLM output after sanitization, before source verification.
+
+    Stores everything ground() needs so the LLM call never has to be repeated.
+    """
+    fields: dict[str, str]
+    garbage: list[QuarantinedField]
+    source_text: str
+    doc_id: str | None
+    source_type: str

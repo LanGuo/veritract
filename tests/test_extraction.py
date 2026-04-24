@@ -288,3 +288,22 @@ def test_extract_garbage_value_quarantined():
     result = extract(SOURCE, SCHEMA, llm, auto_reground=False)
     assert "sample_size" not in result.extracted
     assert any(q["field_name"] == "sample_size" for q in result.quarantined)
+
+
+# --- RawExtractionResult ---
+
+from veritract.types import RawExtractionResult
+
+def test_raw_extraction_result_fields():
+    raw = RawExtractionResult(
+        fields={"drug": "metformin", "sample_size": "248 patients"},
+        garbage=[],
+        source_text="248 patients received metformin.",
+        doc_id="doc1",
+        source_type="abstract",
+    )
+    assert raw.fields["drug"] == "metformin"
+    assert raw.source_text == "248 patients received metformin."
+    assert raw.doc_id == "doc1"
+    assert raw.source_type == "abstract"
+    assert raw.garbage == []
