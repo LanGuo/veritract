@@ -1,5 +1,5 @@
 import pytest
-from veritract.llm import MockLLM
+from veritract.llm import LLMClient, MockLLM
 
 
 def test_mock_llm_registered_response():
@@ -30,3 +30,21 @@ def test_mock_llm_schema_ignored():
     llm.register("test", {"x": "value"})
     result = llm.chat([{"role": "user", "content": "test"}], schema=schema)
     assert result == {"x": "value"}
+
+
+def test_llm_client_options_stored():
+    llm = LLMClient(temperature=0.0, top_p=0.9, seed=42)
+    assert llm._options["temperature"] == 0.0
+    assert llm._options["top_p"] == 0.9
+    assert llm._options["seed"] == 42
+
+
+def test_llm_client_no_options_by_default():
+    llm = LLMClient()
+    assert llm._options == {}
+
+
+def test_llm_client_partial_options():
+    llm = LLMClient(seed=7)
+    assert llm._options == {"seed": 7}
+    assert "temperature" not in llm._options

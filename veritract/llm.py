@@ -9,9 +9,23 @@ from typing import Any
 class LLMClient:
     """Ollama wrapper with retry and constrained JSON output via GBNF grammar."""
 
-    def __init__(self, model: str = "gemma4:e4b", max_retries: int = 3):
+    def __init__(
+        self,
+        model: str = "gemma4:e4b",
+        max_retries: int = 3,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        seed: int | None = None,
+    ):
         self.model = model
         self.max_retries = max_retries
+        self._options: dict[str, Any] = {
+            k: v for k, v in {
+                "temperature": temperature,
+                "top_p": top_p,
+                "seed": seed,
+            }.items() if v is not None
+        }
 
     def chat(self, messages: list[dict], schema: dict | None = None, think: bool = False) -> dict:
         """Call Ollama and return parsed JSON (when schema given) or {"text": ...}.
@@ -31,6 +45,8 @@ class LLMClient:
                     kwargs["format"] = schema
                 if think:
                     kwargs["think"] = True
+                if self._options:
+                    kwargs["options"] = self._options
                 response = ollama.chat(**kwargs)
                 content = response["message"]["content"]
                 return json.loads(content) if schema else {"text": content}
