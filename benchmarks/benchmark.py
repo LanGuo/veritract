@@ -37,7 +37,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from benchmarks.dataset import SAMPLES as SYNTHETIC_SAMPLES, SCHEMA as SYNTHETIC_SCHEMA, FIELDS as SYNTHETIC_FIELDS  # noqa: E402
 from benchmarks.clinicaltrials_dataset import get_samples as get_ct_samples, SCHEMA as CT_SCHEMA, FIELDS as CT_FIELDS  # noqa: E402
 from benchmarks.ebmnlp_dataset import get_samples as get_ebmnlp_samples, SCHEMA as EBMNLP_SCHEMA, FIELDS as EBMNLP_FIELDS  # noqa: E402
-from veritract import extract as vt_extract, extract_raw as vt_extract_raw, ground as vt_ground, LLMClient, optimize_prompt as vt_optimize_prompt  # noqa: E402
+from veritract import extract as vt_extract, extract_raw as vt_extract_raw, ground as vt_ground, LLMClient, optimize_prompt as vt_optimize_prompt, RawExtractionResult  # noqa: E402
 
 _FUZZY_THRESHOLD = 70  # token_set_ratio threshold for "correct" answer
 
@@ -366,98 +366,196 @@ def run_veritract_multi(
 # LangExtract runner
 # ---------------------------------------------------------------------------
 
-def run_langextract(
-    samples: list[dict], model: str, schema: dict, dataset: str = "clinicaltrials",
-    llm_judge: bool = False, optimized_prompt: str | None = None,
-) -> list[dict]:
+_LX_FIELD_DESCRIPTIONS = {
+    "drug": "intervention drug name (verbatim from text, including dosage)",
+    "sample_size": "number of participants enrolled (verbatim from text)",
+    "outcome": "primary outcome measure name (not the result value)",
+    "duration": "study length or follow-up period",
+}
+
+
+def _lx_examples(fields: list[str]):
+    """Build LangExtract ExampleData list from shared few-shot examples."""
     try:
-        import langextract as lx
         from langextract.data import ExampleData, Extraction
     except ImportError:
-        print("  [skip] langextract not installed — skipping LangExtract benchmark")
         return []
-
-    fields = list(schema.get("properties", {}).keys())
-    skip = UNSCORED_FIELDS.get(dataset, set())
-    judge_llm = LLMClient(model=model) if llm_judge else None
-
-    # Build LangExtract examples from _SHARED_EXAMPLES, filtered to schema fields
-    lx_examples = [
+    return [
         ExampleData(
             text=ex["text"],
             extractions=[
                 Extraction(extraction_class=f, extraction_text=ex["fields"][f])
-                for f in fields
-                if f in ex["fields"]
+                for f in fields if f in ex["fields"]
             ],
         )
         for ex in _SHARED_EXAMPLES
     ]
-    field_descriptions = {
-        "drug": "intervention drug name (verbatim from text, including dosage)",
-        "sample_size": "number of participants enrolled (verbatim from text)",
-        "outcome": "primary outcome measure name (not the result value)",
-        "duration": "study length or follow-up period",
+
+
+def _lx_prompt_description(fields: list[str]) -> str:
+    """Minimal prompt_description for LangExtract's QA template (field names + brief hint)."""
+    field_list = ", ".join(
+        f"{f} ({_LX_FIELD_DESCRIPTIONS.get(f, f)})" for f in fields
+    )
+    return (
+        f"Extract the following fields from this clinical trial abstract, "
+        f"copying the exact verbatim phrase from the text: {field_list}."
+    )
+
+
+def _lx_extract_once(
+    sample: dict,
+    model: str,
+    fields: list[str],
+    examples,
+    seed: int,
+    temperature: float,
+    system_prompt: str | None,
+) -> tuple[dict[str, str], bool, float]:
+    """Run LangExtract on one sample. Returns (extracted_vals, failed, elapsed_s)."""
+    import langextract as lx
+
+    lm_params: dict = {"seed": seed}
+    if system_prompt:
+        lm_params["system"] = system_prompt
+
+    t0 = time.perf_counter()
+    docs = lx.extract(
+        text_or_documents=sample["text"],
+        model_id=model,
+        prompt_description=_lx_prompt_description(fields),
+        examples=examples,
+        show_progress=False,
+        temperature=temperature,
+        max_char_buffer=8000,
+        language_model_params=lm_params,
+    )
+    elapsed = time.perf_counter() - t0
+
+    doc = docs if not isinstance(docs, list) else (docs[0] if docs else None)
+    extracted: dict[str, str] = {}
+    if doc and doc.extractions:
+        for ext in doc.extractions:
+            cls = (ext.extraction_class or "").lower()
+            if cls in fields and cls not in extracted:
+                extracted[cls] = ext.extraction_text or ""
+
+    failed = not extracted
+    return extracted, failed, elapsed
+
+
+def _score_extracted(
+    extracted_vals: dict[str, str],
+    sample: dict,
+    skip: set[str],
+    dataset: str,
+    run_idx: int,
+    seed: int,
+    latency: float,
+    quarantine_rate: float | None = None,
+    quarantined: list[str] | None = None,
+    llm=None,
+) -> dict:
+    acc = _accuracy(extracted_vals, sample["ground_truth"], skip, dataset)
+    grounded_count = sum(1 for v in extracted_vals.values() if _is_verbatim(v, sample["text"]))
+    total = len(extracted_vals) or 1
+    row = {
+        "id": sample["id"],
+        "run": run_idx,
+        "seed": seed,
+        "latency": latency,
+        "accuracy": acc,
+        "field_acc": sum(acc.values()) / len(acc) if acc else 0.0,
+        "grounding_rate": grounded_count / total,
+        "quarantine_rate": quarantine_rate,
+        "extracted": extracted_vals,
+        "quarantined": quarantined or [],
+        "error": None,
     }
-    if optimized_prompt is not None:
-        prompt = optimized_prompt  # pass full optimized instruction; LangExtract embeds in its own template
-    else:
-        field_list = ", ".join(
-            f"{f} ({field_descriptions.get(f, f)})" for f in fields
-        )
-        prompt = (
-            f"Extract the following fields from this clinical trial abstract, "
-            f"copying the exact verbatim phrase from the text: {field_list}. "
-            "Each field should appear as a separate extraction with extraction_class "
-            "set to the field name."
-        )
+    if llm:
+        _apply_llm_judging(row, sample, skip, llm)
+    return row
 
-    results = []
-    for s in samples:
-        t0 = time.perf_counter()
-        try:
-            docs = lx.extract(
-                text_or_documents=s["text"],
-                model_id=model,
-                prompt_description=prompt,
-                examples=lx_examples,
-                show_progress=False,
+
+def run_langextract_multi(
+    samples: list[dict],
+    model: str,
+    schema: dict,
+    dataset: str = "clinicaltrials",
+    llm_judge: bool = False,
+    optimized_prompt: str | None = None,
+    n_runs: int = 1,
+    base_seed: int = 42,
+    temperature: float = 0.0,
+) -> dict[str, list[dict]]:
+    """Run LangExtract N times (different seeds), then apply veritract grounding post-hoc.
+
+    Returns {"raw": [...], "grounded": [...]} — parallel lists, one row per (run, sample).
+    The "raw" arm scores LangExtract output verbatim; "grounded" passes the same values
+    through vt_ground(mode="full") for two-stage verification and quarantine.
+    """
+    try:
+        import langextract as lx  # noqa: F401
+    except ImportError:
+        print("  [skip] langextract not installed — skipping LangExtract benchmark")
+        return {"raw": [], "grounded": []}
+
+    fields = list(schema.get("properties", {}).keys())
+    skip = UNSCORED_FIELDS.get(dataset, set())
+    examples = _lx_examples(fields)
+    all_raw: list[dict] = []
+    all_grounded: list[dict] = []
+
+    for run_idx in range(n_runs):
+        seed = base_seed + run_idx
+        grounding_llm = LLMClient(model=model, temperature=temperature, seed=seed)
+
+        for s in samples:
+            try:
+                extracted_vals, failed, elapsed = _lx_extract_once(
+                    s, model, fields, examples, seed, temperature, optimized_prompt,
+                )
+            except Exception as e:
+                err = {"id": s["id"], "run": run_idx, "latency": 0.0, "error": str(e)}
+                all_raw.append(err)
+                all_grounded.append(err)
+                continue
+
+            if failed:
+                err = {"id": s["id"], "run": run_idx, "seed": seed, "latency": elapsed,
+                       "error": "extraction_failed: model returned no valid extractions"}
+                all_raw.append(err)
+                all_grounded.append(err)
+                continue
+
+            judge_llm = grounding_llm if llm_judge else None
+
+            # Raw arm: LangExtract output without grounding
+            all_raw.append(_score_extracted(
+                extracted_vals, s, skip, dataset, run_idx, seed, elapsed, llm=judge_llm,
+            ))
+
+            # Grounded arm: wrap as RawExtractionResult → vt_ground(mode="full")
+            lx_raw = RawExtractionResult(
+                fields=extracted_vals,
+                garbage=[],
+                source_text=s["text"],
+                doc_id=s["id"],
+                source_type="text",
             )
-            elapsed = time.perf_counter() - t0
+            t1 = time.perf_counter()
+            grounded = vt_ground(lx_raw, grounding_llm, mode="full")
+            ground_elapsed = elapsed + (time.perf_counter() - t1)
 
-            doc = docs if not isinstance(docs, list) else (docs[0] if docs else None)
-            extracted_vals: dict[str, str] = {}
-            raw_extraction_count = len(doc.extractions) if doc and doc.extractions else 0
-            if doc and doc.extractions:
-                for ext in doc.extractions:
-                    cls = (ext.extraction_class or "").lower()
-                    if cls in fields and cls not in extracted_vals:
-                        extracted_vals[cls] = ext.extraction_text or ""
+            grounded_vals = {k: v["value"] for k, v in grounded.extracted.items()}
+            all_grounded.append(_score_extracted(
+                grounded_vals, s, skip, dataset, run_idx, seed, ground_elapsed,
+                quarantine_rate=len(grounded.quarantined) / len(fields),
+                quarantined=[q["field_name"] for q in grounded.quarantined],
+                llm=judge_llm,
+            ))
 
-            # Grounding: same definition as veritract — verbatim substring match
-            grounded_count = sum(
-                1 for v in extracted_vals.values() if _is_verbatim(v, s["text"])
-            )
-            acc = _accuracy(extracted_vals, s["ground_truth"], skip, dataset)
-            total = len(extracted_vals) or 1
-            extraction_failed = raw_extraction_count == 0
-            row = {
-                "id": s["id"],
-                "latency": elapsed,
-                "accuracy": acc,
-                "field_acc": sum(acc.values()) / len(acc) if acc else 0.0,
-                "grounding_rate": grounded_count / total,
-                "quarantine_rate": None,
-                "extracted": extracted_vals,
-                "error": "extraction_failed: model returned no valid extractions" if extraction_failed else None,
-            }
-            if judge_llm and not extraction_failed:
-                _apply_llm_judging(row, s, skip, judge_llm)
-            results.append(row)
-        except Exception as e:
-            elapsed = time.perf_counter() - t0
-            results.append({"id": s["id"], "latency": elapsed, "error": str(e)})
-    return results
+    return {"raw": all_raw, "grounded": all_grounded}
 
 
 # ---------------------------------------------------------------------------
@@ -630,15 +728,14 @@ def main() -> None:
     fields = list(schema.get("properties", {}).keys())
     summaries: dict[str, dict] = {}
     all_results: dict[str, list[dict]] = {}
+    n_runs = args.runs
 
-    if args.vt_results:
-        prior = json.loads(Path(args.vt_results).read_text())
-        vt_results = prior.get("veritract", prior) if isinstance(prior, dict) else prior
-        print(f"\nLoaded {len(vt_results)} veritract results from {args.vt_results}")
-        summaries["veritract (full)"] = print_summary("veritract (full)", vt_results, fields)
-        all_results["veritract_full"] = vt_results
-    elif not args.no_veritract:
-        n_runs = args.runs
+    # ------------------------------------------------------------------
+    # veritract: extract_raw once per (run, sample), ground post-hoc
+    #   "no-grounding" arm = raw extractor output (pre-grounding)
+    #   "full" arm         = same raw + two-stage grounding
+    # ------------------------------------------------------------------
+    if not args.no_veritract:
         print(f"\nRunning veritract ({n_runs} run(s), temp={args.temperature}, base_seed={args.seed})...")
         mode_results = run_veritract_multi(
             samples, args.model, schema,
@@ -650,22 +747,45 @@ def main() -> None:
             base_seed=args.seed,
             temperature=args.temperature,
         )
+        arm_map = {"no-grounding": "veritract_raw", "full": "veritract_grounded"}
+        label_map = {"no-grounding": "veritract (raw)", "full": "veritract (grounded)"}
         for mode_name, results in mode_results.items():
-            label = f"veritract ({mode_name})"
+            label = label_map[mode_name]
             run_means = [
                 _mean([r["field_acc"] for r in results if r.get("run") == ri and not r.get("error")])
                 for ri in range(n_runs)
             ]
             _, ci_half = _ci95(run_means)
             summaries[label] = print_summary(label, results, fields, ci_half=ci_half)
-            all_results[f"veritract_{mode_name.replace('-', '_')}"] = results
+            all_results[arm_map[mode_name]] = results
 
+    # ------------------------------------------------------------------
+    # LangExtract: extract N times (different seeds), then ground post-hoc
+    #   "raw" arm     = LangExtract output verbatim (no grounding)
+    #   "grounded" arm = same output + veritract two-stage grounding
+    # ------------------------------------------------------------------
     if not args.no_langextract:
-        print("\nRunning LangExtract...")
-        lx_results = run_langextract(samples, args.model, schema, dataset=args.dataset,
-                                     llm_judge=judge, optimized_prompt=optimized_prompt)
-        summaries["LangExtract"] = print_summary("LangExtract", lx_results, fields)
-        all_results["langextract"] = lx_results
+        print(f"\nRunning LangExtract ({n_runs} run(s), temp={args.temperature}, base_seed={args.seed})...")
+        lx_multi = run_langextract_multi(
+            samples, args.model, schema,
+            dataset=args.dataset,
+            llm_judge=judge,
+            optimized_prompt=optimized_prompt,
+            n_runs=n_runs,
+            base_seed=args.seed,
+            temperature=args.temperature,
+        )
+        lx_arm_map = {"raw": "langextract_raw", "grounded": "langextract_grounded"}
+        lx_label_map = {"raw": "LangExtract (raw)", "grounded": "LangExtract (grounded)"}
+        for arm, results in lx_multi.items():
+            label = lx_label_map[arm]
+            run_means = [
+                _mean([r["field_acc"] for r in results if r.get("run") == ri and not r.get("error")])
+                for ri in range(n_runs)
+            ]
+            _, ci_half = _ci95(run_means)
+            summaries[label] = print_summary(label, results, fields, ci_half=ci_half)
+            all_results[lx_arm_map[arm]] = results
 
     print_comparison(summaries)
 
