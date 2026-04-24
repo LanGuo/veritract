@@ -307,3 +307,46 @@ def test_raw_extraction_result_fields():
     assert raw.doc_id == "doc1"
     assert raw.source_type == "abstract"
     assert raw.garbage == []
+
+
+# --- extract_raw() ---
+
+from veritract.extraction import extract_raw
+
+def test_extract_raw_returns_raw_result():
+    llm = MockLLM()
+    llm.register("sample_size", {
+        "sample_size": "248 patients",
+        "intervention": "metformin 500mg twice daily",
+        "primary_outcome": "HbA1c reduction at 12 months",
+    })
+    raw = extract_raw(SOURCE, SCHEMA, llm)
+    assert isinstance(raw, RawExtractionResult)
+    assert raw.fields["sample_size"] == "248 patients"
+    assert raw.source_text == SOURCE
+    assert raw.doc_id is None
+    assert raw.source_type == "text"
+
+
+def test_extract_raw_propagates_doc_id():
+    llm = MockLLM()
+    llm.register("sample_size", {
+        "sample_size": "248 patients",
+        "intervention": "metformin 500mg twice daily",
+        "primary_outcome": "HbA1c reduction at 12 months",
+    })
+    raw = extract_raw(SOURCE, SCHEMA, llm, doc_id="pmid:1234", source_type="abstract")
+    assert raw.doc_id == "pmid:1234"
+    assert raw.source_type == "abstract"
+
+
+def test_extract_raw_quarantines_garbage():
+    llm = MockLLM()
+    llm.register("sample_size", {
+        "sample_size": "','",
+        "intervention": "metformin 500mg twice daily",
+        "primary_outcome": "HbA1c reduction at 12 months",
+    })
+    raw = extract_raw(SOURCE, SCHEMA, llm)
+    assert "sample_size" not in raw.fields
+    assert any(q["field_name"] == "sample_size" for q in raw.garbage)

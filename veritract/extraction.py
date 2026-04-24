@@ -158,6 +158,39 @@ def load_images_b64(paths: list[str], max_images: int = 8) -> list[str]:
     return images
 
 
+def extract_raw(
+    text: str,
+    schema: dict,
+    llm,
+    *,
+    prompt: str | None = None,
+    examples: list[dict] | None = None,
+    images: list[str] | None = None,
+    doc_id: str | None = None,
+    source_type: str = "text",
+) -> "RawExtractionResult":
+    """Call the LLM and return sanitized field values without source verification.
+
+    Use ground() on the returned RawExtractionResult to apply verification.
+    This split lets you reuse the same LLM output across multiple grounding
+    strategies or save raw outputs for offline analysis.
+    """
+    from veritract.types import RawExtractionResult
+    content = _build_prompt(text, schema, prompt, examples)
+    message: dict = {"role": "user", "content": content}
+    if images:
+        message["images"] = images
+    raw = llm.chat([message], schema=schema)
+    raw_strings, garbage = _sanitize_raw_values(raw)
+    return RawExtractionResult(
+        fields=raw_strings,
+        garbage=garbage,
+        source_text=text,
+        doc_id=doc_id,
+        source_type=source_type,
+    )
+
+
 _VERIFICATION_MODES = ("full", "fuzzy", "no-grounding")
 
 
