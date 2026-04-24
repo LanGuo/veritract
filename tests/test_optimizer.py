@@ -135,3 +135,8 @@ def test_optimize_prompt_no_examples_raises():
     llm = MockLLM()
     with pytest.raises(ValueError, match="examples"):
         optimize_prompt([], _OPT_SCHEMA, llm, n_iter=1)
+
+
+def test_optimize_prompt_importable_from_package():
+    from veritract import optimize_prompt as op
+    assert callable(op)
