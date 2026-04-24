@@ -3,3 +3,6 @@ __pycache__/
 dist/
 venv/
 *.egg-info/
+benchmarks/*_cache.json
+benchmarks/results_*.json
+docs/superpowers/
