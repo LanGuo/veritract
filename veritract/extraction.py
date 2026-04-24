@@ -191,6 +191,54 @@ def extract_raw(
     )
 
 
+def ground(
+    raw: "RawExtractionResult",
+    llm=None,
+    *,
+    mode: str = "full",
+    thresholds: dict[str, int] | None = None,
+) -> ExtractionResult:
+    """Apply source verification to a RawExtractionResult.
+
+    Args:
+        raw: Output of extract_raw().
+        llm: Required only for mode="full" (LLM re-verification of quarantined
+            fields). Pass None for mode="fuzzy" or mode="no-grounding".
+        mode: Same semantics as extract(). "full" requires llm.
+        thresholds: Custom source_type → fuzzy threshold mapping.
+
+    Raises:
+        ValueError: If mode is unrecognised.
+    """
+    if mode not in _VERIFICATION_MODES:
+        raise ValueError(f"mode must be one of {_VERIFICATION_MODES!r}, got {mode!r}")
+
+    if mode == "no-grounding":
+        extracted = {
+            k: GroundedField(value=v, span=None, confidence=100.0)
+            for k, v in raw.fields.items()
+        }
+        return ExtractionResult(extracted=extracted, quarantined=raw.garbage)
+
+    grounder = ExtractionGrounder(thresholds=thresholds)
+    grounded, quarantined = grounder.ground_extracted_data(
+        raw.fields,
+        source_text=raw.source_text,
+        doc_id=raw.doc_id,
+        source_type=raw.source_type,
+    )
+    quarantined = raw.garbage + quarantined
+
+    if mode == "full" and quarantined:
+        promoted, still_quarantined = _auto_llm_ground(
+            quarantined, raw.source_text, llm, raw.doc_id, raw.source_type
+        )
+        grounded.update(promoted)
+        quarantined = still_quarantined
+
+    return ExtractionResult(extracted=grounded, quarantined=quarantined)
+
+
 _VERIFICATION_MODES = ("full", "fuzzy", "no-grounding")
 
 
@@ -271,42 +319,21 @@ def extract(
     if mode not in _VERIFICATION_MODES:
         raise ValueError(f"mode must be one of {_VERIFICATION_MODES!r}, got {mode!r}")
 
-    # Resolve effective grounding flags: explicit booleans override mode.
+    # Resolve legacy boolean flags into effective mode.
     _mode_grounding = mode != "no-grounding"
     _mode_reground = mode == "full"
     _do_grounding = grounding if grounding is not None else _mode_grounding
     _do_reground = auto_reground if auto_reground is not None else _mode_reground
-
-    content = _build_prompt(text, schema, prompt, examples)
-    message: dict = {"role": "user", "content": content}
-    if images:
-        message["images"] = images
-
-    raw = llm.chat([message], schema=schema)
-    raw_strings, garbage_fields = _sanitize_raw_values(raw)
-
     if not _do_grounding:
-        extracted = {
-            k: GroundedField(value=v, span=None, confidence=100.0)
-            for k, v in raw_strings.items()
-        }
-        return ExtractionResult(extracted=extracted, quarantined=garbage_fields)
+        effective_mode = "no-grounding"
+    elif not _do_reground:
+        effective_mode = "fuzzy"
+    else:
+        effective_mode = "full"
 
-    grounder = ExtractionGrounder(thresholds=thresholds)
-    grounded, quarantined_fields = grounder.ground_extracted_data(
-        raw_strings,
-        source_text=text,
-        doc_id=doc_id,
-        source_type=source_type,
+    raw = extract_raw(
+        text, schema, llm,
+        prompt=prompt, examples=examples, images=images,
+        doc_id=doc_id, source_type=source_type,
     )
-
-    quarantined_fields = garbage_fields + quarantined_fields
-
-    if _do_reground and quarantined_fields:
-        promoted, still_quarantined = _auto_llm_ground(
-            quarantined_fields, text, llm, doc_id, source_type
-        )
-        grounded.update(promoted)
-        quarantined_fields = still_quarantined
-
-    return ExtractionResult(extracted=grounded, quarantined=quarantined_fields)
+    return ground(raw, llm, mode=effective_mode, thresholds=thresholds)

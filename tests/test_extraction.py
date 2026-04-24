@@ -350,3 +350,64 @@ def test_extract_raw_quarantines_garbage():
     raw = extract_raw(SOURCE, SCHEMA, llm)
     assert "sample_size" not in raw.fields
     assert any(q["field_name"] == "sample_size" for q in raw.garbage)
+
+
+# --- ground() ---
+
+from veritract.extraction import ground
+
+
+def _make_raw(fields, source=SOURCE):
+    return RawExtractionResult(
+        fields=fields,
+        garbage=[],
+        source_text=source,
+        doc_id=None,
+        source_type="text",
+    )
+
+
+def test_ground_no_grounding_mode_accepts_all():
+    raw = _make_raw({"sample_size": "completely made up value xyz",
+                     "intervention": "nonexistent drug"})
+    result = ground(raw, llm=None, mode="no-grounding")
+    assert len(result.extracted) == 2
+    assert result.quarantined == []
+    for f in result.extracted.values():
+        assert f["span"] is None
+
+
+def test_ground_fuzzy_quarantines_ungrounded():
+    raw = _make_raw({"sample_size": "248 patients",
+                     "intervention": "insulin glargine 10 units nightly"})
+    result = ground(raw, llm=None, mode="fuzzy")
+    assert "sample_size" in result.extracted
+    assert any(q["field_name"] == "intervention" for q in result.quarantined)
+
+
+def test_ground_full_promotes_via_llm():
+    llm = MockLLM()
+    llm.register("insulin glargine", {"supported": True, "span": "metformin 500mg twice daily"})
+    raw = _make_raw({"sample_size": "248 patients",
+                     "intervention": "insulin glargine 10 units nightly"})
+    result = ground(raw, llm, mode="full")
+    assert "intervention" in result.extracted
+
+
+def test_ground_invalid_mode_raises():
+    raw = _make_raw({"sample_size": "248 patients"})
+    with pytest.raises(ValueError, match="mode must be one of"):
+        ground(raw, llm=None, mode="turbo")
+
+
+def test_extract_calls_extract_raw_and_ground():
+    """extract() still works identically after refactor."""
+    llm = MockLLM()
+    llm.register("sample_size", {
+        "sample_size": "248 patients",
+        "intervention": "metformin 500mg twice daily",
+        "primary_outcome": "HbA1c reduction at 12 months",
+    })
+    result = extract(SOURCE, SCHEMA, llm, mode="no-grounding")
+    assert len(result.extracted) == 3
+    assert result.quarantined == []
