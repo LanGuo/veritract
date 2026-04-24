@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json as _json
+import random as _random
 from veritract.types import GroundedField, QuarantinedField
+from veritract.extraction import extract, _build_prompt
 
 
 def _score_results(
@@ -87,3 +89,101 @@ def _mutate_prompt(
         return new_prompt if new_prompt else current_prompt
     except Exception:
         return current_prompt
+
+
+def optimize_prompt(
+    examples: list[dict],
+    schema: dict,
+    llm,
+    *,
+    n_iter: int = 3,
+    n_sample: int | None = None,
+    ground_truth: list[dict] | None = None,
+    seed: int | None = None,
+) -> str:
+    """Iteratively refine an extraction prompt using extraction outcomes as feedback.
+
+    Args:
+        examples: List of dicts with keys "text" and "fields". Used as few-shot
+            context in the initial prompt; "fields" values used as GT when
+            ground_truth is None.
+        schema: JSON Schema dict defining extraction fields.
+        llm: LLM client with a chat(messages, schema=None) method.
+        n_iter: Number of refinement iterations. 0 returns the initial prompt.
+        n_sample: Max examples to evaluate per iteration. Defaults to all.
+        ground_truth: Optional list of GT dicts (parallel to examples) for
+            supervised scoring. When None, unsupervised grounding rate is used.
+        seed: Random seed for sampling reproducibility.
+
+    Returns:
+        The best-performing prompt string found across all iterations.
+
+    Raises:
+        ValueError: If examples is empty.
+    """
+    if not examples:
+        raise ValueError("examples must be non-empty")
+
+    rng = _random.Random(seed)
+    fields = list(schema.get("properties", {}).keys())
+
+    current_prompt = _build_prompt(examples[0]["text"], schema, prompt=None, examples=examples)
+
+    best_prompt = current_prompt
+    best_score = -1.0
+
+    for iteration in range(n_iter):
+        indices = list(range(len(examples)))
+        if n_sample is not None and n_sample < len(indices):
+            indices = rng.sample(indices, n_sample)
+
+        scores = []
+        failures: list[dict] = []
+
+        for idx in indices:
+            ex = examples[idx]
+            source = ex["text"]
+            gt = ground_truth[idx] if ground_truth is not None else None
+
+            eval_prompt = current_prompt + f"\n\nText:\n{source[:6000]}"
+
+            try:
+                result = extract(source, schema, llm, prompt=eval_prompt, mode="fuzzy")
+            except Exception:
+                scores.append(0.0)
+                continue
+
+            score = _score_results(result.extracted, result.quarantined, gt)
+            scores.append(score)
+
+            if gt is not None:
+                for field in fields:
+                    gf = result.extracted.get(field)
+                    extracted_val = gf["value"] if gf else ""
+                    expected_val = gt.get(field, "")
+                    ev = extracted_val.strip().lower()
+                    eg = expected_val.strip().lower()
+                    if not (ev and eg and (ev in eg or eg in ev)):
+                        failures.append({
+                            "field": field,
+                            "extracted": extracted_val,
+                            "expected": expected_val,
+                        })
+            else:
+                for qf in result.quarantined:
+                    failures.append({
+                        "field": qf["field_name"],
+                        "extracted": qf["value"],
+                        "reason": qf["reason"],
+                    })
+
+        mean_score = sum(scores) / len(scores) if scores else 0.0
+
+        if mean_score > best_score:
+            best_score = mean_score
+            best_prompt = current_prompt
+
+        if iteration < n_iter - 1:
+            current_prompt = _mutate_prompt(current_prompt, schema, failures, llm)
+
+    return best_prompt

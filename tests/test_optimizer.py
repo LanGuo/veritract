@@ -85,3 +85,53 @@ def test_mutate_prompt_falls_back_on_llm_error():
         llm=llm,
     )
     assert result == "My prompt."
+
+
+from veritract.optimizer import optimize_prompt
+
+_SOURCE = "The trial enrolled 248 patients. Patients received metformin 500mg twice daily."
+_OPT_SCHEMA = {
+    "type": "object",
+    "properties": {"drug": {"type": "string"}, "sample_size": {"type": "string"}},
+    "required": ["drug", "sample_size"],
+}
+_EXAMPLES = [
+    {
+        "text": _SOURCE,
+        "fields": {"drug": "metformin 500mg twice daily", "sample_size": "248 patients"},
+    }
+]
+
+
+def test_optimize_prompt_returns_string():
+    llm = MockLLM()
+    # MockLLM matches "248 patients" substring → used for extract() calls
+    llm.register("248 patients", {"drug": "metformin 500mg twice daily", "sample_size": "248 patients"})
+    # MockLLM matches "Improve" → used for _mutate_prompt calls
+    llm.register("Improve", {"text": "Better prompt."})
+    result = optimize_prompt(_EXAMPLES, _OPT_SCHEMA, llm, n_iter=1)
+    assert isinstance(result, str)
+    assert len(result) > 0
+
+
+def test_optimize_prompt_supervised_with_gt():
+    llm = MockLLM()
+    llm.register("248 patients", {"drug": "metformin 500mg twice daily", "sample_size": "248 patients"})
+    llm.register("Improve", {"text": "Refined prompt."})
+    result = optimize_prompt(
+        _EXAMPLES, _OPT_SCHEMA, llm, n_iter=2,
+        ground_truth=[{"drug": "metformin 500mg twice daily", "sample_size": "248 patients"}],
+    )
+    assert isinstance(result, str)
+
+
+def test_optimize_prompt_zero_iter_returns_initial():
+    llm = MockLLM()
+    result = optimize_prompt(_EXAMPLES, _OPT_SCHEMA, llm, n_iter=0)
+    assert isinstance(result, str)
+
+
+def test_optimize_prompt_no_examples_raises():
+    llm = MockLLM()
+    with pytest.raises(ValueError, match="examples"):
+        optimize_prompt([], _OPT_SCHEMA, llm, n_iter=1)
