@@ -411,3 +411,10 @@ def test_extract_calls_extract_raw_and_ground():
     result = extract(SOURCE, SCHEMA, llm, mode="no-grounding")
     assert len(result.extracted) == 3
     assert result.quarantined == []
+
+
+def test_extract_raw_and_ground_importable_from_package():
+    from veritract import extract_raw as er, ground as g, RawExtractionResult as R
+    assert callable(er)
+    assert callable(g)
+    assert R is not None
