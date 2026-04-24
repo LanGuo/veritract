@@ -22,7 +22,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
+import statistics as _stats
 import sys
 import time
 from pathlib import Path
@@ -35,7 +37,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from benchmarks.dataset import SAMPLES as SYNTHETIC_SAMPLES, SCHEMA as SYNTHETIC_SCHEMA, FIELDS as SYNTHETIC_FIELDS  # noqa: E402
 from benchmarks.clinicaltrials_dataset import get_samples as get_ct_samples, SCHEMA as CT_SCHEMA, FIELDS as CT_FIELDS  # noqa: E402
 from benchmarks.ebmnlp_dataset import get_samples as get_ebmnlp_samples, SCHEMA as EBMNLP_SCHEMA, FIELDS as EBMNLP_FIELDS  # noqa: E402
-from veritract import extract as vt_extract, LLMClient, optimize_prompt as vt_optimize_prompt  # noqa: E402
+from veritract import extract as vt_extract, extract_raw as vt_extract_raw, ground as vt_ground, LLMClient, optimize_prompt as vt_optimize_prompt  # noqa: E402
 
 _FUZZY_THRESHOLD = 70  # token_set_ratio threshold for "correct" answer
 
@@ -85,6 +87,21 @@ UNSCORED_FIELDS: dict[str, set[str]] = {
     "ebmnlp": set(),
     "synthetic": set(),
 }
+
+_T_CRIT = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571,
+           6: 2.447, 7: 2.365, 8: 2.306, 9: 2.262, 14: 2.145, 29: 2.045}
+
+
+def _ci95(values: list[float]) -> tuple[float, float]:
+    """Return (mean, half-width of 95% CI using t-distribution). Half-width is 0 for N=1."""
+    n = len(values)
+    if n <= 1:
+        return (values[0] if values else 0.0), 0.0
+    m = _stats.mean(values)
+    s = _stats.stdev(values)
+    t = _T_CRIT.get(n - 1, 1.96)
+    return m, t * s / math.sqrt(n)
+
 
 # ---------------------------------------------------------------------------
 # Accuracy helpers
@@ -271,50 +288,78 @@ def _derive_lx_prompt(optimized_prompt: str, fields: list[str]) -> str:
 # veritract runner
 # ---------------------------------------------------------------------------
 
-def run_veritract(
-    samples: list[dict], model: str, schema: dict, dataset: str = "clinicaltrials",
-    mode: str = "full", llm_judge: bool = False,
+def run_veritract_multi(
+    samples: list[dict],
+    model: str,
+    schema: dict,
+    dataset: str = "clinicaltrials",
+    modes: tuple[str, ...] = ("full", "no-grounding"),
+    llm_judge: bool = False,
     optimized_prompt: str | None = None,
-) -> list[dict]:
-    llm = LLMClient(model=model)
+    n_runs: int = 1,
+    base_seed: int = 42,
+    temperature: float = 0.0,
+) -> dict[str, list[dict]]:
+    """Run veritract N times; apply all grounding modes to the same raw output per run.
+
+    Each run uses a different seed (base_seed + run_idx) with temperature=0 for
+    near-deterministic extraction. All modes share the same extract_raw() output
+    within a run, enabling a true apples-to-apples grounding comparison.
+
+    Returns dict mapping mode name → flat list of result rows across all runs.
+    Each row has a "run" key with the run index.
+    """
     fields = list(schema.get("properties", {}).keys())
     skip = UNSCORED_FIELDS.get(dataset, set())
-    results = []
-    for i, s in enumerate(samples):
-        t0 = time.perf_counter()
-        try:
-            if optimized_prompt is not None:
-                full_prompt = optimized_prompt + f"\n\nText:\n{s['text'][:6000]}"
-                result = vt_extract(s["text"], schema, llm, mode=mode, prompt=full_prompt)
-            else:
-                result = vt_extract(s["text"], schema, llm, mode=mode,
-                                   examples=_SHARED_EXAMPLES)
-            elapsed = time.perf_counter() - t0
-            extracted_vals = {k: v["value"] for k, v in result.extracted.items()}
-            acc = _accuracy(extracted_vals, s["ground_truth"], skip, dataset)
-            grounded = sum(
-                1 for f, v in extracted_vals.items()
-                if _is_verbatim(v, s["text"])
-            )
-            total_extracted = len(extracted_vals)
-            row = {
-                "id": s["id"],
-                "latency": elapsed,
-                "accuracy": acc,
-                "field_acc": sum(acc.values()) / len(acc) if acc else 0.0,
-                "grounding_rate": grounded / total_extracted if total_extracted else 0.0,
-                "quarantine_rate": len(result.quarantined) / len(fields),
-                "extracted": extracted_vals,
-                "quarantined": [q["field_name"] for q in result.quarantined],
-                "error": None,
-            }
-            if llm_judge:
-                _apply_llm_judging(row, s, skip, llm)
-            results.append(row)
-        except Exception as e:
-            elapsed = time.perf_counter() - t0
-            results.append({"id": s["id"], "latency": elapsed, "error": str(e)})
-    return results
+    all_mode_results: dict[str, list[dict]] = {m: [] for m in modes}
+
+    for run_idx in range(n_runs):
+        seed = base_seed + run_idx
+        llm = LLMClient(model=model, temperature=temperature, seed=seed)
+
+        for s in samples:
+            t0 = time.perf_counter()
+            try:
+                if optimized_prompt is not None:
+                    full_prompt = optimized_prompt + f"\n\nText:\n{s['text'][:6000]}"
+                    raw = vt_extract_raw(s["text"], schema, llm, prompt=full_prompt)
+                else:
+                    raw = vt_extract_raw(s["text"], schema, llm, examples=_SHARED_EXAMPLES)
+                raw_elapsed = time.perf_counter() - t0
+
+                for mode in modes:
+                    t1 = time.perf_counter()
+                    result = vt_ground(raw, llm, mode=mode)
+                    elapsed = raw_elapsed + (time.perf_counter() - t1)
+
+                    extracted_vals = {k: v["value"] for k, v in result.extracted.items()}
+                    acc = _accuracy(extracted_vals, s["ground_truth"], skip, dataset)
+                    grounded = sum(1 for v in extracted_vals.values() if _is_verbatim(v, s["text"]))
+                    total_extracted = len(extracted_vals)
+                    row = {
+                        "id": s["id"],
+                        "run": run_idx,
+                        "seed": seed,
+                        "latency": elapsed,
+                        "accuracy": acc,
+                        "field_acc": sum(acc.values()) / len(acc) if acc else 0.0,
+                        "grounding_rate": grounded / total_extracted if total_extracted else 0.0,
+                        "quarantine_rate": len(result.quarantined) / len(fields),
+                        "extracted": extracted_vals,
+                        "quarantined": [q["field_name"] for q in result.quarantined],
+                        "error": None,
+                    }
+                    if llm_judge:
+                        _apply_llm_judging(row, s, skip, llm)
+                    all_mode_results[mode].append(row)
+
+            except Exception as e:
+                elapsed = time.perf_counter() - t0
+                err = {"id": s["id"], "run": run_idx, "latency": elapsed, "error": str(e)}
+                for mode in modes:
+                    all_mode_results[mode].append(err)
+
+    return all_mode_results
 
 
 # ---------------------------------------------------------------------------
@@ -355,7 +400,7 @@ def run_langextract(
         "duration": "study length or follow-up period",
     }
     if optimized_prompt is not None:
-        prompt = _derive_lx_prompt(optimized_prompt, fields)
+        prompt = optimized_prompt  # pass full optimized instruction; LangExtract embeds in its own template
     else:
         field_list = ", ".join(
             f"{f} ({field_descriptions.get(f, f)})" for f in fields
@@ -423,7 +468,7 @@ def _mean(vals: list[float]) -> float:
     return sum(vals) / len(vals) if vals else 0.0
 
 
-def print_summary(name: str, results: list[dict], fields: list[str] | None = None) -> dict:
+def print_summary(name: str, results: list[dict], fields: list[str] | None = None, ci_half: float = 0.0) -> dict:
     ok = [r for r in results if not r.get("error")]
     if not ok:
         print(f"\n{name}: no successful results")
@@ -445,7 +490,8 @@ def print_summary(name: str, results: list[dict], fields: list[str] | None = Non
     print(f"  Samples:           {len(ok)}/{len(results)}")
     print(f"  Latency (mean):    {_mean(latencies):.1f}s")
     print(f"  Latency (min/max): {min(latencies):.1f}s / {max(latencies):.1f}s")
-    print(f"  Field accuracy:    {_mean(field_accs)*100:.1f}%")
+    ci_str = f" ± {ci_half*100:.1f}%" if ci_half > 0 else ""
+    print(f"  Field accuracy:    {_mean(field_accs)*100:.1f}%{ci_str}")
     print(f"  Grounding rate:    {_mean(grounding_rates)*100:.1f}%")
     if any(r.get("quarantine_rate") is not None for r in ok):
         qr = [r["quarantine_rate"] for r in ok if r.get("quarantine_rate") is not None]
@@ -526,6 +572,12 @@ def main() -> None:
                         help="Number of samples to use for optimization calibration (default: 20)")
     parser.add_argument("--opt-n", type=int, default=3,
                         help="Number of optimization iterations (default: 3)")
+    parser.add_argument("--runs", type=int, default=1,
+                        help="Number of runs per arm with different seeds for CI (default: 1)")
+    parser.add_argument("--temperature", type=float, default=0.0,
+                        help="LLM sampling temperature; 0.0 = deterministic (default: 0.0)")
+    parser.add_argument("--seed", type=int, default=42,
+                        help="Base random seed; run i uses seed+i (default: 42)")
     parser.add_argument(
         "--dataset", choices=["synthetic", "clinicaltrials", "ebmnlp"], default="ebmnlp",
         help="Dataset to use (default: ebmnlp — requires --build first)",
@@ -555,6 +607,8 @@ def main() -> None:
     judge = args.llm_judge
     print(f"Benchmark: veritract vs LangExtract")
     print(f"Model: {args.model} | Dataset: {args.dataset} | Samples: {len(samples)}"
+          + (f" | Runs: {args.runs}" if args.runs > 1 else "")
+          + (f" | Temp: {args.temperature}" if hasattr(args, 'temperature') else "")
           + (" | LLM judge: ON" if judge else ""))
     print(f"{'='*50}")
 
@@ -584,21 +638,27 @@ def main() -> None:
         summaries["veritract (full)"] = print_summary("veritract (full)", vt_results, fields)
         all_results["veritract_full"] = vt_results
     elif not args.no_veritract:
-        print("\nRunning veritract (full grounding)...")
-        vt_full = run_veritract(
-            samples, args.model, schema, dataset=args.dataset,
-            mode="full", llm_judge=judge, optimized_prompt=optimized_prompt,
+        n_runs = args.runs
+        print(f"\nRunning veritract ({n_runs} run(s), temp={args.temperature}, base_seed={args.seed})...")
+        mode_results = run_veritract_multi(
+            samples, args.model, schema,
+            dataset=args.dataset,
+            modes=("full", "no-grounding"),
+            llm_judge=judge,
+            optimized_prompt=optimized_prompt,
+            n_runs=n_runs,
+            base_seed=args.seed,
+            temperature=args.temperature,
         )
-        summaries["veritract (full)"] = print_summary("veritract (full)", vt_full, fields)
-        all_results["veritract_full"] = vt_full
-
-        print("\nRunning veritract (no-grounding)...")
-        vt_ng = run_veritract(
-            samples, args.model, schema, dataset=args.dataset,
-            mode="no-grounding", llm_judge=judge, optimized_prompt=optimized_prompt,
-        )
-        summaries["veritract (no-grnd)"] = print_summary("veritract (no-grnd)", vt_ng, fields)
-        all_results["veritract_no_grounding"] = vt_ng
+        for mode_name, results in mode_results.items():
+            label = f"veritract ({mode_name})"
+            run_means = [
+                _mean([r["field_acc"] for r in results if r.get("run") == ri and not r.get("error")])
+                for ri in range(n_runs)
+            ]
+            _, ci_half = _ci95(run_means)
+            summaries[label] = print_summary(label, results, fields, ci_half=ci_half)
+            all_results[f"veritract_{mode_name.replace('-', '_')}"] = results
 
     if not args.no_langextract:
         print("\nRunning LangExtract...")
