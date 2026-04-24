@@ -37,6 +37,25 @@ def test_build_prompt_generates_from_schema():
     assert SOURCE[:100] in result
 
 
+def test_build_prompt_includes_examples():
+    examples = [{
+        "text": "100 patients received aspirin daily for 6 months.",
+        "fields": {"sample_size": "100 patients", "intervention": "aspirin daily"},
+    }]
+    result = _build_prompt(SOURCE, SCHEMA, None, examples)
+    assert "100 patients" in result
+    assert "aspirin daily" in result
+    assert SOURCE[:100] in result
+
+
+def test_build_prompt_examples_ignored_when_prompt_provided():
+    examples = [{"text": "irrelevant", "fields": {"sample_size": "irrelevant"}}]
+    custom = "My custom prompt."
+    result = _build_prompt("hello", SCHEMA, custom, examples)
+    assert result == custom
+    assert "irrelevant" not in result
+
+
 # --- _locate_span ---
 
 def test_locate_span_finds_verbatim_quote():
@@ -125,6 +144,64 @@ def test_extract_grounding_disabled():
         "primary_outcome": "fictional outcome",
     })
     result = extract(SOURCE, SCHEMA, llm, grounding=False)
+    assert len(result.extracted) == 3
+    assert result.quarantined == []
+
+
+# --- mode parameter ---
+
+def test_extract_mode_no_grounding_accepts_all():
+    llm = MockLLM()
+    llm.register("sample_size", {
+        "sample_size": "completely made up value xyz",
+        "intervention": "nonexistent drug",
+        "primary_outcome": "fictional outcome",
+    })
+    result = extract(SOURCE, SCHEMA, llm, mode="no-grounding")
+    assert len(result.extracted) == 3
+    assert result.quarantined == []
+    for f in result.extracted.values():
+        assert f["span"] is None
+
+
+def test_extract_mode_fuzzy_quarantines_without_regrounding():
+    llm = MockLLM()
+    llm.register("sample_size", {
+        "sample_size": "248 patients",
+        "intervention": "insulin glargine 10 units nightly",
+        "primary_outcome": "HbA1c reduction at 12 months",
+    })
+    result = extract(SOURCE, SCHEMA, llm, mode="fuzzy")
+    assert any(q["field_name"] == "intervention" for q in result.quarantined)
+
+
+def test_extract_mode_full_attempts_regrounding():
+    llm = MockLLM()
+    llm.register("sample_size", {
+        "sample_size": "248 patients",
+        "intervention": "metformin twice daily",
+        "primary_outcome": "HbA1c reduction at 12 months",
+    })
+    llm.register("metformin twice daily", {"supported": True, "span": "metformin 500mg twice daily"})
+    result = extract(SOURCE, SCHEMA, llm, mode="full")
+    assert "intervention" in result.extracted
+
+
+def test_extract_mode_invalid_raises():
+    llm = MockLLM()
+    with pytest.raises(ValueError, match="mode must be one of"):
+        extract(SOURCE, SCHEMA, llm, mode="turbo")
+
+
+def test_extract_mode_explicit_bool_overrides_mode():
+    """grounding=False overrides mode="full"."""
+    llm = MockLLM()
+    llm.register("sample_size", {
+        "sample_size": "completely made up value xyz",
+        "intervention": "nonexistent drug",
+        "primary_outcome": "fictional outcome",
+    })
+    result = extract(SOURCE, SCHEMA, llm, mode="full", grounding=False)
     assert len(result.extracted) == 3
     assert result.quarantined == []
 
