@@ -153,7 +153,31 @@ regex-based repair.
 | `QuarantinedField` | TypedDict: `field_name`, `value`, `reason` |
 | `Span` | TypedDict: `doc_id`, `source_type`, `char_start`, `char_end`, `text`, `provenance_type` |
 
-See [comparables.md](comparables.md) for a full comparison with Instructor, LangExtract, NuExtract, GLiNER, and others.
+## Comparison with alternatives
+
+Most structured extraction tools stop at getting the LLM to return valid JSON. veritract's differentiator is the grounding layer: every extracted value is traced back to a character span in the source, and values that can't be verified are quarantined rather than silently returned. This matters when downstream consumers need to trust individual fields — not just the overall schema shape.
+
+| | veritract | Instructor | LangExtract | NuExtract | GLiNER |
+|---|---|---|---|---|---|
+| **Backend** | Ollama (local) | Any LLM API | Ollama / Gemini | Local HF model | Local HF model |
+| **Constrained JSON decoding** | ✓ GBNF token masking | ✓ (provider-dependent) | ✓ | ✓ | — (span extraction) |
+| **Source grounding / provenance** | ✓ char spans, typed | ✗ | ✗ | ✗ | ✓ (span-native) |
+| **Quarantine on unverifiable fields** | ✓ | ✗ | ✗ | ✗ | ✗ |
+| **Separate extract / ground stages** | ✓ | ✗ | ✗ | ✗ | — |
+| **Prompt optimization** | ✓ iterative, supervised | ✗ | ✗ | ✗ | ✗ |
+| **Multimodal (image) input** | ✓ | provider-dependent | ✗ | ✗ | ✗ |
+| **Fully local / air-gapped** | ✓ | ✗ (API required) | ✓ | ✓ | ✓ |
+| **Schema-driven** | ✓ JSON Schema | ✓ Pydantic | class-based | ✓ | fixed NER types |
+
+**Instructor** is the most popular choice for schema-validated LLM output but has no notion of whether extracted values actually appear in the source — hallucinated values pass through silently.
+
+**LangExtract** uses a QA-style prompt format that naturally produces verbatim spans, giving high grounding rates, but provides no quarantine path and has a ~30% failure rate on some models. Its grounding is implicit rather than verified.
+
+**NuExtract** is a fine-tuned extraction model with good throughput but no source verification and no mechanism for handling fields the model can't confidently extract.
+
+**GLiNER** is span-extraction native (always grounded by construction) but is limited to predefined NER-style entity types — it can't handle arbitrary schema fields or multi-token structured values like sample sizes with units.
+
+veritract's niche is **schema-flexible extraction with an explicit trust signal per field**: the provenance type (`direct` / `paraphrased` / `inferred` / quarantined) lets downstream code treat high-confidence and uncertain fields differently, rather than accepting or rejecting the entire extraction.
 
 ## License
 
