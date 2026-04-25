@@ -265,22 +265,23 @@ def _apply_llm_judging(
 def _derive_lx_prompt(optimized_prompt: str, fields: list[str]) -> str:
     """Extract the instruction portion of a veritract-optimized prompt for LangExtract.
 
-    Stops before the Examples: / Text: / Now extract sections which are
-    veritract-specific and would confuse LangExtract's QA format.
+    Strips veritract-specific sections that conflict with LangExtract's QA format:
+    - JSON structure examples ({...})
+    - Source Text / Text: template placeholders
+    - Examples: / Now extract sections
+    Falls back to the default field-list description if nothing survives stripping.
     """
     lines = []
     for line in optimized_prompt.split("\n"):
         low = line.strip().lower()
-        if low.startswith("examples:") or low.startswith("text:") or low.startswith("now extract"):
+        if (low.startswith("examples:") or low.startswith("text:")
+                or low.startswith("source text") or low.startswith("now extract")
+                or "{}" in line or (line.strip().startswith("{") and "}" in line)):
             break
         lines.append(line)
     instruction = "\n".join(lines).strip()
     if not instruction:
-        field_list = ", ".join(fields)
-        return (
-            f"Extract the following fields verbatim from the clinical trial abstract: {field_list}. "
-            "Copy the exact phrase from the text."
-        )
+        return _lx_prompt_description(fields)
     return instruction
 
 
@@ -410,25 +411,31 @@ def _lx_extract_once(
     examples,
     seed: int,
     temperature: float,
-    system_prompt: str | None,
+    optimized_prompt: str | None,
 ) -> tuple[dict[str, str], bool, float]:
-    """Run LangExtract on one sample. Returns (extracted_vals, failed, elapsed_s)."""
+    """Run LangExtract on one sample. Returns (extracted_vals, failed, elapsed_s).
+
+    If optimized_prompt is provided, its instruction portion (stripped of
+    veritract-specific JSON template and Source Text sections) is passed as
+    prompt_description so LangExtract's QA format is preserved.
+    """
     import langextract as lx
 
-    lm_params: dict = {"seed": seed}
-    if system_prompt:
-        lm_params["system"] = system_prompt
+    if optimized_prompt is not None:
+        prompt_desc = _derive_lx_prompt(optimized_prompt, fields)
+    else:
+        prompt_desc = _lx_prompt_description(fields)
 
     t0 = time.perf_counter()
     docs = lx.extract(
         text_or_documents=sample["text"],
         model_id=model,
-        prompt_description=_lx_prompt_description(fields),
+        prompt_description=prompt_desc,
         examples=examples,
         show_progress=False,
         temperature=temperature,
         max_char_buffer=8000,
-        language_model_params=lm_params,
+        language_model_params={"seed": seed},
     )
     elapsed = time.perf_counter() - t0
 
@@ -513,7 +520,8 @@ def run_langextract_multi(
         for s in samples:
             try:
                 extracted_vals, failed, elapsed = _lx_extract_once(
-                    s, model, fields, examples, seed, temperature, optimized_prompt,
+                    s, model, fields, examples, seed, temperature,
+                    optimized_prompt=optimized_prompt,
                 )
             except Exception as e:
                 err = {"id": s["id"], "run": run_idx, "latency": 0.0, "error": str(e)}
