@@ -137,6 +137,55 @@ Analysis of the two 155-sample runs:
 
 ---
 
+---
+
+## 2026-04-24 — 4-arm benchmark: post-hoc grounding on both extractors, 3-run CI
+
+**What changed:**
+- New benchmark design: `extract_raw()` and `ground()` are separate steps for both extractors
+- veritract: `extract_raw()` called once per (run, sample); `vt_ground()` applied post-hoc for both raw and grounded arms — true apples-to-apples grounding comparison with no LLM non-determinism between arms
+- LangExtract: same design — run N times, then `vt_ground()` applied post-hoc to its output
+- 3 runs per extractor (seeds 42/43/44, temp=0.0) for 95% CI
+- LLM judge ON for all arms
+- Optimized prompt (3 iter, 20 cal samples)
+- Results file: `benchmarks/results_4arm_multirun.json`
+
+**veritract — 465 samples (155 × 3 runs)**
+
+| Metric | veritract (raw) | veritract (grounded) |
+|---|---|---|
+| Samples | 465/465 | 465/465 |
+| Field accuracy | 72.9% | 72.9% |
+| Grounding rate | 98.4% | 98.7% |
+| Quarantine rate | 4.7% | 4.9% |
+| Latency (mean) | 29.2s | 32.1s |
+| drug | 67% | 67% |
+| sample_size | 95% | 95% |
+| outcome | 56% | 56% |
+
+**LangExtract — FAILED (456/465 errors)**
+
+LangExtract had a 98% failure rate (`extraction_failed: model returned no valid extractions`). Root cause: the optimized prompt ends with `Source Text: "{}"` — a veritract-specific template. When passed as LangExtract's Ollama system prompt via `language_model_params={"system": ...}`, it conflicts with LangExtract's internal QA format construction. The model follows the system prompt's JSON instruction instead of LangExtract's extraction format, producing output that LangExtract's parser cannot interpret.
+
+Only 9/465 samples succeeded (likely those where the model happened to produce output compatible with both formats):
+
+| Metric | LangExtract (raw) | LangExtract (grounded) |
+|---|---|---|
+| Samples | 9/465 ❌ | 9/465 ❌ |
+| Field accuracy | 66.7% | 66.7% |
+| Grounding rate | 100.0% | 100.0% |
+
+**Notes:**
+
+- **veritract accuracy regression** (75.7% → 72.9%) — this run used `temp=0.0` and `seed=42/43/44` which changes the sampling distribution vs prior runs at Ollama default temperature. The constrained decoding at temp=0 may be producing slightly more conservative (mode-collapsing) outputs. Not directly comparable to prior runs.
+- **Raw vs grounded identical** (72.9% both) — confirms the earlier finding: with only 50M active params and optimized prompt, the model already produces mostly verbatim phrases. Grounding's quarantine step (4.7–4.9% quarantine rate) catches genuinely unverifiable fields without hurting accuracy on verifiable ones.
+- **95% CI not shown** — with 3 identical-seed runs at temp=0 all runs produce the same output, so CI half-width is 0 for veritract. CI is only meaningful with non-zero temperature; seeds alone are insufficient when temp=0 forces deterministic sampling.
+
+**Fix needed for LangExtract re-run:**
+Pass only the instruction portion of the optimized prompt (stripping the JSON structure and `Source Text: "{}"` template), or use the default `_lx_prompt_description()` without the veritract prompt. LangExtract works best with its native QA format — the optimized prompt should be adapted rather than passed verbatim.
+
+---
+
 ## Summary: accuracy progression (veritract, EBM-NLP, LLM judge)
 
 | Date | Config | Samples | Accuracy | Key change |
@@ -146,3 +195,4 @@ Analysis of the two 155-sample runs:
 | 2026-04-23 | optimized prompt, mode=full | 20 | 75.0% | Prompt optimization (3 iter) |
 | 2026-04-24 | optimized prompt, mode=full | 155 | 75.7% | Full-scale confirmation |
 | 2026-04-24 | optimized prompt, mode=no-grounding | 155 | 77.8% | Separate run; difference is noise |
+| 2026-04-24 | 4-arm, temp=0, 3 runs | 465 | 72.9% | Post-hoc grounding design; temp=0 regression |
