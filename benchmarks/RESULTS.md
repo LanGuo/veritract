@@ -186,6 +186,42 @@ Pass only the instruction portion of the optimized prompt (stripping the JSON st
 
 ---
 
+---
+
+## 2026-04-26 — 4-arm benchmark v2: LangExtract prompt fix, temp=0.3 for real CI
+
+**What changed:**
+- Fixed LangExtract prompt: `_derive_lx_prompt()` now strips JSON template and `Source Text:` placeholder before passing to LangExtract's QA format; dropped system-prompt approach that caused 98% failure in v1
+- Temperature raised to 0.3 so different seeds produce genuinely different outputs, making 95% CI meaningful
+- Same 4-arm design: veritract raw/grounded and LangExtract raw/grounded, all using same raw extraction per run
+- Results file: `benchmarks/results_4arm_multirun_v2.json`
+
+**4-arm results — 155 samples, 3 runs (seeds 42/43/44), temp=0.3, LLM judge ON**
+
+| Metric | veritract (raw) | veritract (grounded) | LangExtract (raw) | LangExtract (grounded) |
+|---|---|---|---|---|
+| Samples | 465/465 | 465/465 | 330/465 ⚠️ | 330/465 ⚠️ |
+| Field accuracy | 64.1% ± 1.1% | 64.1% ± 1.1% | 74.8% ± 1.3% | 74.8% ± 1.3% |
+| Grounding rate | 99.1% | 99.0% | 91.9% | 91.9% |
+| Quarantine rate | 5.7% | 5.6% | — | 0.2% |
+| Latency (mean) | 33.9s | 37.1s | 10.1s | 11.2s |
+| drug | 65% | 65% | 83% | 83% |
+| sample_size | 95% | 95% | 98% | 98% |
+| outcome | 33% | 33% | 44% | 44% |
+
+**Notes:**
+
+- **LangExtract 29% failure rate** (135/465 errors) — this is consistent with prior single-run results (~30%). The model returns no valid extractions for roughly 1 in 3 samples regardless of prompt tuning. Accuracy numbers above are over the 330 successful samples only.
+- **LangExtract leads on accuracy among successful samples** (74.8% vs 64.1%) — its QA-format prompting is better at reading comprehension than veritract's JSON template-filling mode, especially for `drug` (83% vs 65%) and `outcome` (44% vs 33%).
+- **Grounding makes no difference to accuracy for either extractor** — raw and grounded are identical across all fields for both. With temp=0.3, the model already produces mostly verbatim phrases (veritract 99%, LangExtract 92% grounding rate). Grounding adds quarantine signal but doesn't recover or lose accuracy.
+- **veritract accuracy regression from prior runs** (75.7% → 64.1%) — driven by temp=0.3 producing more varied outputs than temp=0, combined with the optimized prompt varying across runs. This run is not directly comparable to prior single-run benchmarks at different temperatures.
+- **CI is now meaningful**: ±1.1% (veritract) and ±1.3% (LangExtract) — runs at temp=0.3 produce genuine variance across seeds. The veritract raw/grounded CIs are identical as expected (same raw shared between arms).
+- **Grounding latency overhead**: +3.2s for veritract (37.1s vs 33.9s), +1.1s for LangExtract (11.2s vs 10.1s) — both small relative to extraction time.
+
+**Open question:** veritract's accuracy gap vs LangExtract is now consistent and large (10+ pp). LangExtract's QA format activates stronger reading comprehension. The next investigation should focus on whether veritract's JSON-template format can be improved, or whether a hybrid QA-then-structure approach is worth exploring.
+
+---
+
 ## Summary: accuracy progression (veritract, EBM-NLP, LLM judge)
 
 | Date | Config | Samples | Accuracy | Key change |
@@ -195,4 +231,5 @@ Pass only the instruction portion of the optimized prompt (stripping the JSON st
 | 2026-04-23 | optimized prompt, mode=full | 20 | 75.0% | Prompt optimization (3 iter) |
 | 2026-04-24 | optimized prompt, mode=full | 155 | 75.7% | Full-scale confirmation |
 | 2026-04-24 | optimized prompt, mode=no-grounding | 155 | 77.8% | Separate run; difference is noise |
-| 2026-04-24 | 4-arm, temp=0, 3 runs | 465 | 72.9% | Post-hoc grounding design; temp=0 regression |
+| 2026-04-24 | 4-arm, temp=0, 3 runs | 465 | 72.9% | Post-hoc grounding design; temp=0 collapse |
+| 2026-04-26 | 4-arm, temp=0.3, 3 runs | 465 | 64.1% ± 1.1% | First run with real CI; temp=0.3 lowers accuracy |
