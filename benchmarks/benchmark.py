@@ -273,7 +273,7 @@ def _derive_lx_prompt(optimized_prompt: str, fields: list[str]) -> str:
     """
     lines = []
     for line in optimized_prompt.split("\n"):
-        low = line.strip().lower()
+        low = line.strip().lower().lstrip("*# ")  # strip markdown formatting before checking
         if (low.startswith("examples:") or low.startswith("text:")
                 or low.startswith("source text") or low.startswith("now extract")
                 or "{}" in line or (line.strip().startswith("{") and "}" in line)):
