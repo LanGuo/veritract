@@ -165,8 +165,19 @@ def _fuzzy_match(predicted: str, expected: str) -> bool:
     return False
 
 
-def _score_field(field: str, predicted: str, expected: str, dataset: str = "clinicaltrials") -> bool:
-    """Field-specific scoring logic."""
+def _score_field(field: str, predicted: str, expected: str | list[str], dataset: str = "clinicaltrials") -> bool:
+    """Field-specific scoring logic. expected may be a single string or a list of GT spans.
+
+    When a list is given, returns True if predicted matches ANY span (deduped).
+    """
+    if isinstance(expected, list):
+        seen: set[str] = set()
+        for e in expected:
+            if e not in seen:
+                seen.add(e)
+                if _score_field(field, predicted, e, dataset):
+                    return True
+        return False
     if field == "sample_size":
         # Try numeric proximity first (handles CT.gov enrolled vs analyzed N,
         # and EBM-NLP written-out numbers when LLM normalizes to digits).
@@ -178,30 +189,35 @@ def _score_field(field: str, predicted: str, expected: str, dataset: str = "clin
     return _fuzzy_match(predicted, expected)
 
 
-def _llm_judge(field: str, predicted: str, expected: str, source_text: str, llm) -> bool:
+def _llm_judge(field: str, predicted: str, expected: str | list[str], source_text: str, llm) -> bool:
     """Semantic equivalence judge via LLM with a clinical extraction rubric.
 
-    Used for fields (outcome, drug) where fuzzy string matching is unreliable
-    because valid extractions may be paraphrased, abbreviated, or more/less
-    specific than the ground truth span.
+    expected may be a single GT span or a list of all valid GT spans for the field.
+    Used for fields (outcome, drug) where fuzzy string matching is unreliable.
     """
     if not predicted.strip():
         return False
+    if isinstance(expected, list):
+        seen: set[str] = set()
+        gt_display = " | ".join(e for e in expected if not (e in seen or seen.add(e)))  # type: ignore[func-returns-value]
+    else:
+        gt_display = expected
     try:
         result = llm.chat([{
             "role": "user",
             "content": (
                 f"You are evaluating clinical information extraction quality.\n\n"
                 f"Field: {field}\n"
-                f"Ground truth: \"{expected}\"\n"
+                f"Acceptable ground truth values: \"{gt_display}\"\n"
                 f"Model extracted: \"{predicted}\"\n\n"
                 f"Source text:\n{source_text[:3000]}\n\n"
                 "Is the extracted value semantically correct for this field?\n"
                 "Rules:\n"
+                "- CORRECT if it matches or is semantically equivalent to ANY of the acceptable ground truth values\n"
                 "- CORRECT if it refers to the same clinical concept, even if abbreviated or phrased differently\n"
-                "- CORRECT if it is a more complete / more specific version of the ground truth\n"
-                "- CORRECT if the ground truth is an abbreviation/acronym of the extracted value\n"
-                "- WRONG if it refers to an entirely different concept\n"
+                "- CORRECT if it is a more complete / more specific version of any ground truth value\n"
+                "- CORRECT if any ground truth value is an abbreviation/acronym of the extracted value\n"
+                "- WRONG if it refers to an entirely different concept from all ground truth values\n"
                 "- WRONG if it is a result or finding rather than the measure/intervention name\n"
                 "- WRONG if it is empty\n\n"
                 'Return JSON: {"correct": true or false}'
@@ -217,9 +233,20 @@ def _accuracy(
     ground_truth: dict[str, str],
     skip: set[str],
     dataset: str = "clinicaltrials",
+    all_gt_spans: dict[str, list[str]] | None = None,
 ) -> dict[str, bool]:
+    """Score extracted fields against ground truth.
+
+    When all_gt_spans is provided (EBM-NLP), a prediction is correct if it
+    matches ANY annotated span for that field, not just the first one.
+    """
     return {
-        field: _score_field(field, extracted.get(field, ""), ground_truth[field], dataset)
+        field: _score_field(
+            field,
+            extracted.get(field, ""),
+            all_gt_spans.get(field, [ground_truth[field]]) if all_gt_spans else ground_truth[field],
+            dataset,
+        )
         for field in ground_truth
         if field not in skip
     }
@@ -234,23 +261,20 @@ def _apply_llm_judging(
     """Re-score LLM_JUDGE_FIELDS in-place using semantic LLM judge.
 
     Only upgrades a score from False → True; never downgrades a passing field.
+    Uses all_gt_spans when available so the judge sees every valid GT span.
     Updates field_acc to reflect the new scores.
     """
     acc = result.get("accuracy", {})
     extracted = result.get("extracted", {})
+    all_gt_spans = sample.get("all_gt_spans", {})
     changed = False
     for field in _LLM_JUDGE_FIELDS:
         if field in skip or field not in acc:
             continue
         if acc[field]:
             continue  # already correct, skip LLM call
-        judged = _llm_judge(
-            field,
-            extracted.get(field, ""),
-            sample["ground_truth"].get(field, ""),
-            sample["text"],
-            llm,
-        )
+        expected = all_gt_spans.get(field) or sample["ground_truth"].get(field, "")
+        judged = _llm_judge(field, extracted.get(field, ""), expected, sample["text"], llm)
         if judged:
             acc[field] = True
             changed = True
@@ -334,7 +358,7 @@ def run_veritract_multi(
                     elapsed = raw_elapsed + (time.perf_counter() - t1)
 
                     extracted_vals = {k: v["value"] for k, v in result.extracted.items()}
-                    acc = _accuracy(extracted_vals, s["ground_truth"], skip, dataset)
+                    acc = _accuracy(extracted_vals, s["ground_truth"], skip, dataset, all_gt_spans=s.get("all_gt_spans"))
                     grounded = sum(1 for v in extracted_vals.values() if _is_verbatim(v, s["text"]))
                     total_extracted = len(extracted_vals)
                     row = {
@@ -463,7 +487,7 @@ def _score_extracted(
     quarantined: list[str] | None = None,
     llm=None,
 ) -> dict:
-    acc = _accuracy(extracted_vals, sample["ground_truth"], skip, dataset)
+    acc = _accuracy(extracted_vals, sample["ground_truth"], skip, dataset, all_gt_spans=sample.get("all_gt_spans"))
     grounded_count = sum(1 for v in extracted_vals.values() if _is_verbatim(v, sample["text"]))
     total = len(extracted_vals) or 1
     row = {
