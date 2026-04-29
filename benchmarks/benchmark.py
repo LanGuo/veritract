@@ -302,6 +302,9 @@ def _derive_lx_prompt(optimized_prompt: str, fields: list[str]) -> str:
                 or low.startswith("source text") or low.startswith("now extract")
                 or "{}" in line or (line.strip().startswith("{") and "}" in line)):
             break
+        # Skip JSON-format instructions that conflict with LangExtract's QA format.
+        if "return json" in low or "output json" in low:
+            continue
         lines.append(line)
     instruction = "\n".join(lines).strip()
     if not instruction:
@@ -318,25 +321,21 @@ def run_veritract_multi(
     model: str,
     schema: dict,
     dataset: str = "clinicaltrials",
-    modes: tuple[str, ...] = ("full", "no-grounding"),
     llm_judge: bool = False,
     optimized_prompt: str | None = None,
     n_runs: int = 1,
     base_seed: int = 42,
     temperature: float = 0.0,
-) -> dict[str, list[dict]]:
-    """Run veritract N times; apply all grounding modes to the same raw output per run.
+) -> list[dict]:
+    """Run veritract N times with full grounding; store spans and quarantine with raw_value.
 
-    Each run uses a different seed (base_seed + run_idx) with temperature=0 for
-    near-deterministic extraction. All modes share the same extract_raw() output
-    within a run, enabling a true apples-to-apples grounding comparison.
-
-    Returns dict mapping mode name → flat list of result rows across all runs.
-    Each row has a "run" key with the run index.
+    Returns a flat list of result rows across all (run, sample) pairs.
+    Each row stores per-field spans (char offsets + provenance_type + confidence)
+    and quarantined entries with the raw extracted value for downstream analysis.
     """
     fields = list(schema.get("properties", {}).keys())
     skip = UNSCORED_FIELDS.get(dataset, set())
-    all_mode_results: dict[str, list[dict]] = {m: [] for m in modes}
+    results: list[dict] = []
 
     for run_idx in range(n_runs):
         seed = base_seed + run_idx
@@ -350,41 +349,57 @@ def run_veritract_multi(
                     raw = vt_extract_raw(s["text"], schema, llm, prompt=full_prompt)
                 else:
                     raw = vt_extract_raw(s["text"], schema, llm, examples=_SHARED_EXAMPLES)
-                raw_elapsed = time.perf_counter() - t0
+                latency_extraction = time.perf_counter() - t0
 
-                for mode in modes:
-                    t1 = time.perf_counter()
-                    result = vt_ground(raw, llm, mode=mode)
-                    elapsed = raw_elapsed + (time.perf_counter() - t1)
+                t1 = time.perf_counter()
+                result = vt_ground(raw, llm, mode="full")
+                latency_grounding = time.perf_counter() - t1
 
-                    extracted_vals = {k: v["value"] for k, v in result.extracted.items()}
-                    acc = _accuracy(extracted_vals, s["ground_truth"], skip, dataset, all_gt_spans=s.get("all_gt_spans"))
-                    grounded = sum(1 for v in extracted_vals.values() if _is_verbatim(v, s["text"]))
-                    total_extracted = len(extracted_vals)
-                    row = {
-                        "id": s["id"],
-                        "run": run_idx,
-                        "seed": seed,
-                        "latency": elapsed,
-                        "accuracy": acc,
-                        "field_acc": sum(acc.values()) / len(acc) if acc else 0.0,
-                        "grounding_rate": grounded / total_extracted if total_extracted else 0.0,
-                        "quarantine_rate": len(result.quarantined) / len(fields),
-                        "extracted": extracted_vals,
-                        "quarantined": [q["field_name"] for q in result.quarantined],
-                        "error": None,
-                    }
-                    if llm_judge:
-                        _apply_llm_judging(row, s, skip, llm)
-                    all_mode_results[mode].append(row)
+                extracted_vals: dict[str, str] = {}
+                spans: dict[str, dict | None] = {}
+                for field, gf in result.extracted.items():
+                    extracted_vals[field] = gf["value"]
+                    span = gf["span"]
+                    spans[field] = {
+                        "char_start": span["char_start"],
+                        "char_end": span["char_end"],
+                        "provenance_type": span["provenance_type"],
+                        "confidence": gf["confidence"],
+                    } if span is not None else None
+
+                quarantined = [
+                    {"field": q["field_name"], "raw_value": q["value"], "reason": q["reason"]}
+                    for q in result.quarantined
+                ]
+
+                acc = _accuracy(extracted_vals, s["ground_truth"], skip, dataset, all_gt_spans=s.get("all_gt_spans"))
+                n_with_span = sum(1 for f in fields if spans.get(f) is not None)
+                row = {
+                    "id": s["id"],
+                    "run": run_idx,
+                    "seed": seed,
+                    "latency_extraction": latency_extraction,
+                    "latency_grounding": latency_grounding,
+                    "latency": latency_extraction + latency_grounding,
+                    "extracted": extracted_vals,
+                    "spans": spans,
+                    "quarantined": quarantined,
+                    "accuracy": acc,
+                    "field_acc": sum(acc.values()) / len(acc) if acc else 0.0,
+                    "grounding_rate": n_with_span / len(fields) if fields else 0.0,
+                    "quarantine_rate": len(quarantined) / len(fields) if fields else 0.0,
+                    "error": None,
+                }
+                if llm_judge:
+                    _apply_llm_judging(row, s, skip, llm)
+                results.append(row)
 
             except Exception as e:
                 elapsed = time.perf_counter() - t0
-                err = {"id": s["id"], "run": run_idx, "latency": elapsed, "error": str(e)}
-                for mode in modes:
-                    all_mode_results[mode].append(err)
+                results.append({"id": s["id"], "run": run_idx, "seed": seed,
+                                 "latency": elapsed, "error": str(e)})
 
-    return all_mode_results
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -475,39 +490,6 @@ def _lx_extract_once(
     return extracted, failed, elapsed
 
 
-def _score_extracted(
-    extracted_vals: dict[str, str],
-    sample: dict,
-    skip: set[str],
-    dataset: str,
-    run_idx: int,
-    seed: int,
-    latency: float,
-    quarantine_rate: float | None = None,
-    quarantined: list[str] | None = None,
-    llm=None,
-) -> dict:
-    acc = _accuracy(extracted_vals, sample["ground_truth"], skip, dataset, all_gt_spans=sample.get("all_gt_spans"))
-    grounded_count = sum(1 for v in extracted_vals.values() if _is_verbatim(v, sample["text"]))
-    total = len(extracted_vals) or 1
-    row = {
-        "id": sample["id"],
-        "run": run_idx,
-        "seed": seed,
-        "latency": latency,
-        "accuracy": acc,
-        "field_acc": sum(acc.values()) / len(acc) if acc else 0.0,
-        "grounding_rate": grounded_count / total,
-        "quarantine_rate": quarantine_rate,
-        "extracted": extracted_vals,
-        "quarantined": quarantined or [],
-        "error": None,
-    }
-    if llm:
-        _apply_llm_judging(row, sample, skip, llm)
-    return row
-
-
 def run_langextract_multi(
     samples: list[dict],
     model: str,
@@ -518,24 +500,23 @@ def run_langextract_multi(
     n_runs: int = 1,
     base_seed: int = 42,
     temperature: float = 0.0,
-) -> dict[str, list[dict]]:
-    """Run LangExtract N times (different seeds), then apply veritract grounding post-hoc.
+) -> list[dict]:
+    """Run LangExtract N times, then apply veritract grounding; store spans and quarantine.
 
-    Returns {"raw": [...], "grounded": [...]} — parallel lists, one row per (run, sample).
-    The "raw" arm scores LangExtract output verbatim; "grounded" passes the same values
-    through vt_ground(mode="full") for two-stage verification and quarantine.
+    Returns a flat list of result rows (one row per (run, sample) pair).
+    Grounding is applied post-hoc via vt_ground(mode="full") so span metadata
+    is captured in the same format as run_veritract_multi output.
     """
     try:
         import langextract as lx  # noqa: F401
     except ImportError:
         print("  [skip] langextract not installed — skipping LangExtract benchmark")
-        return {"raw": [], "grounded": []}
+        return []
 
     fields = list(schema.get("properties", {}).keys())
     skip = UNSCORED_FIELDS.get(dataset, set())
     examples = _lx_examples(fields)
-    all_raw: list[dict] = []
-    all_grounded: list[dict] = []
+    results: list[dict] = []
 
     for run_idx in range(n_runs):
         seed = base_seed + run_idx
@@ -543,31 +524,23 @@ def run_langextract_multi(
 
         for s in samples:
             try:
-                extracted_vals, failed, elapsed = _lx_extract_once(
+                extracted_vals, failed, latency_extraction = _lx_extract_once(
                     s, model, fields, examples, seed, temperature,
                     optimized_prompt=optimized_prompt,
                 )
             except Exception as e:
-                err = {"id": s["id"], "run": run_idx, "latency": 0.0, "error": str(e)}
-                all_raw.append(err)
-                all_grounded.append(err)
+                results.append({"id": s["id"], "run": run_idx, "seed": seed,
+                                 "latency": 0.0, "error": str(e)})
                 continue
 
             if failed:
-                err = {"id": s["id"], "run": run_idx, "seed": seed, "latency": elapsed,
-                       "error": "extraction_failed: model returned no valid extractions"}
-                all_raw.append(err)
-                all_grounded.append(err)
+                results.append({
+                    "id": s["id"], "run": run_idx, "seed": seed,
+                    "latency": latency_extraction,
+                    "error": "extraction_failed: model returned no valid extractions",
+                })
                 continue
 
-            judge_llm = grounding_llm if llm_judge else None
-
-            # Raw arm: LangExtract output without grounding
-            all_raw.append(_score_extracted(
-                extracted_vals, s, skip, dataset, run_idx, seed, elapsed, llm=judge_llm,
-            ))
-
-            # Grounded arm: wrap as RawExtractionResult → vt_ground(mode="full")
             lx_raw = RawExtractionResult(
                 fields=extracted_vals,
                 garbage=[],
@@ -577,17 +550,48 @@ def run_langextract_multi(
             )
             t1 = time.perf_counter()
             grounded = vt_ground(lx_raw, grounding_llm, mode="full")
-            ground_elapsed = elapsed + (time.perf_counter() - t1)
+            latency_grounding = time.perf_counter() - t1
 
-            grounded_vals = {k: v["value"] for k, v in grounded.extracted.items()}
-            all_grounded.append(_score_extracted(
-                grounded_vals, s, skip, dataset, run_idx, seed, ground_elapsed,
-                quarantine_rate=len(grounded.quarantined) / len(fields),
-                quarantined=[q["field_name"] for q in grounded.quarantined],
-                llm=judge_llm,
-            ))
+            grounded_vals: dict[str, str] = {}
+            spans: dict[str, dict | None] = {}
+            for field, gf in grounded.extracted.items():
+                grounded_vals[field] = gf["value"]
+                span = gf["span"]
+                spans[field] = {
+                    "char_start": span["char_start"],
+                    "char_end": span["char_end"],
+                    "provenance_type": span["provenance_type"],
+                    "confidence": gf["confidence"],
+                } if span is not None else None
 
-    return {"raw": all_raw, "grounded": all_grounded}
+            quarantined = [
+                {"field": q["field_name"], "raw_value": q["value"], "reason": q["reason"]}
+                for q in grounded.quarantined
+            ]
+
+            acc = _accuracy(grounded_vals, s["ground_truth"], skip, dataset, all_gt_spans=s.get("all_gt_spans"))
+            n_with_span = sum(1 for f in fields if spans.get(f) is not None)
+            row = {
+                "id": s["id"],
+                "run": run_idx,
+                "seed": seed,
+                "latency_extraction": latency_extraction,
+                "latency_grounding": latency_grounding,
+                "latency": latency_extraction + latency_grounding,
+                "extracted": grounded_vals,
+                "spans": spans,
+                "quarantined": quarantined,
+                "accuracy": acc,
+                "field_acc": sum(acc.values()) / len(acc) if acc else 0.0,
+                "grounding_rate": n_with_span / len(fields) if fields else 0.0,
+                "quarantine_rate": len(quarantined) / len(fields) if fields else 0.0,
+                "error": None,
+            }
+            if llm_judge:
+                _apply_llm_judging(row, s, skip, grounding_llm)
+            results.append(row)
+
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -654,6 +658,56 @@ def print_summary(name: str, results: list[dict], fields: list[str] | None = Non
     }
 
 
+def print_grounding_metrics(name: str, results: list[dict], fields: list[str]) -> None:
+    """Print provenance breakdown and quarantine precision/recall."""
+    ok = [r for r in results if not r.get("error")]
+    if not ok:
+        return
+
+    provenance_counts: dict[str, int] = {}
+    total_grounded = 0
+    for r in ok:
+        for span_info in r.get("spans", {}).values():
+            if span_info is not None:
+                ptype = span_info.get("provenance_type", "unknown")
+                provenance_counts[ptype] = provenance_counts.get(ptype, 0) + 1
+                total_grounded += 1
+
+    n_quarantine_correct = 0
+    n_quarantine_wrong = 0
+    n_not_quarantined_wrong = 0
+    n_total_quarantined = 0
+    for r in ok:
+        acc = r.get("accuracy", {})
+        quarantined_fields = {q["field"] for q in r.get("quarantined", [])}
+        n_total_quarantined += len(quarantined_fields)
+        for field, is_correct in acc.items():
+            if field in quarantined_fields:
+                if is_correct:
+                    n_quarantine_correct += 1
+                else:
+                    n_quarantine_wrong += 1
+            elif not is_correct:
+                n_not_quarantined_wrong += 1
+
+    precision = n_quarantine_wrong / n_total_quarantined if n_total_quarantined else 0.0
+    denom_recall = n_quarantine_wrong + n_not_quarantined_wrong
+    recall = n_quarantine_wrong / denom_recall if denom_recall else 0.0
+
+    print(f"\n  {name} — Grounding metrics:")
+    if total_grounded:
+        print(f"  Provenance ({total_grounded} grounded fields):")
+        for ptype, count in sorted(provenance_counts.items(), key=lambda x: -x[1]):
+            print(f"    {ptype:<15} {count:>5}  ({count/total_grounded*100:.0f}%)")
+    if n_total_quarantined:
+        print(f"  Quarantine precision: {precision*100:.0f}%"
+              f"  ({n_quarantine_wrong}/{n_total_quarantined} quarantined were actually wrong)")
+        print(f"  Quarantine recall:    {recall*100:.0f}%"
+              f"  ({n_quarantine_wrong}/{denom_recall} wrong fields caught)")
+    else:
+        print(f"  No quarantined fields.")
+
+
 def print_comparison(
     summaries: dict[str, dict],  # label → summary dict
 ) -> None:
@@ -690,7 +744,6 @@ def main() -> None:
     parser.add_argument("--model", default="gemma4:e4b", help="Ollama model to use")
     parser.add_argument("--no-veritract", action="store_true", help="Skip veritract")
     parser.add_argument("--no-langextract", action="store_true", help="Skip LangExtract")
-    parser.add_argument("--no-reground", action="store_true", help="Disable veritract auto_reground")
     parser.add_argument("--llm-judge", action="store_true",
                         help="Re-score outcome/drug fields with LLM semantic judge (adds latency)")
     parser.add_argument("--samples", type=int, default=0, help="Limit to N samples (0=all)")
@@ -763,42 +816,34 @@ def main() -> None:
     n_runs = args.runs
 
     # ------------------------------------------------------------------
-    # veritract: extract_raw once per (run, sample), ground post-hoc
-    #   "no-grounding" arm = raw extractor output (pre-grounding)
-    #   "full" arm         = same raw + two-stage grounding
+    # veritract: extract_raw + full grounding; spans stored per field
     # ------------------------------------------------------------------
     if not args.no_veritract:
         print(f"\nRunning veritract ({n_runs} run(s), temp={args.temperature}, base_seed={args.seed})...")
-        mode_results = run_veritract_multi(
+        vt_results = run_veritract_multi(
             samples, args.model, schema,
             dataset=args.dataset,
-            modes=("full", "no-grounding"),
             llm_judge=judge,
             optimized_prompt=optimized_prompt,
             n_runs=n_runs,
             base_seed=args.seed,
             temperature=args.temperature,
         )
-        arm_map = {"no-grounding": "veritract_raw", "full": "veritract_grounded"}
-        label_map = {"no-grounding": "veritract (raw)", "full": "veritract (grounded)"}
-        for mode_name, results in mode_results.items():
-            label = label_map[mode_name]
-            run_means = [
-                _mean([r["field_acc"] for r in results if r.get("run") == ri and not r.get("error")])
-                for ri in range(n_runs)
-            ]
-            _, ci_half = _ci95(run_means)
-            summaries[label] = print_summary(label, results, fields, ci_half=ci_half)
-            all_results[arm_map[mode_name]] = results
+        run_means = [
+            _mean([r["field_acc"] for r in vt_results if r.get("run") == ri and not r.get("error")])
+            for ri in range(n_runs)
+        ]
+        _, ci_half = _ci95(run_means)
+        summaries["veritract"] = print_summary("veritract", vt_results, fields, ci_half=ci_half)
+        print_grounding_metrics("veritract", vt_results, fields)
+        all_results["veritract"] = vt_results
 
     # ------------------------------------------------------------------
-    # LangExtract: extract N times (different seeds), then ground post-hoc
-    #   "raw" arm     = LangExtract output verbatim (no grounding)
-    #   "grounded" arm = same output + veritract two-stage grounding
+    # LangExtract: extract N times, then apply veritract grounding post-hoc
     # ------------------------------------------------------------------
     if not args.no_langextract:
         print(f"\nRunning LangExtract ({n_runs} run(s), temp={args.temperature}, base_seed={args.seed})...")
-        lx_multi = run_langextract_multi(
+        lx_results = run_langextract_multi(
             samples, args.model, schema,
             dataset=args.dataset,
             llm_judge=judge,
@@ -807,17 +852,14 @@ def main() -> None:
             base_seed=args.seed,
             temperature=args.temperature,
         )
-        lx_arm_map = {"raw": "langextract_raw", "grounded": "langextract_grounded"}
-        lx_label_map = {"raw": "LangExtract (raw)", "grounded": "LangExtract (grounded)"}
-        for arm, results in lx_multi.items():
-            label = lx_label_map[arm]
-            run_means = [
-                _mean([r["field_acc"] for r in results if r.get("run") == ri and not r.get("error")])
-                for ri in range(n_runs)
-            ]
-            _, ci_half = _ci95(run_means)
-            summaries[label] = print_summary(label, results, fields, ci_half=ci_half)
-            all_results[lx_arm_map[arm]] = results
+        run_means = [
+            _mean([r["field_acc"] for r in lx_results if r.get("run") == ri and not r.get("error")])
+            for ri in range(n_runs)
+        ]
+        _, ci_half = _ci95(run_means)
+        summaries["langextract"] = print_summary("LangExtract", lx_results, fields, ci_half=ci_half)
+        print_grounding_metrics("LangExtract", lx_results, fields)
+        all_results["langextract"] = lx_results
 
     print_comparison(summaries)
 
