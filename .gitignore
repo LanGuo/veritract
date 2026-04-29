@@ -5,4 +5,5 @@ venv/
 *.egg-info/
 benchmarks/*_cache.json
 benchmarks/results_*.json
+benchmarks/result_logs.md
 docs/superpowers/
