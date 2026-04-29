@@ -179,6 +179,27 @@ Most structured extraction tools stop at getting the LLM to return valid JSON. v
 
 veritract's niche is **schema-flexible extraction with an explicit trust signal per field**: the provenance type (`direct` / `paraphrased` / `inferred` / quarantined) lets downstream code treat high-confidence and uncertain fields differently, rather than accepting or rejecting the entire extraction.
 
+## Benchmark
+
+Evaluated on **EBM-NLP 2.0** (155 expert-annotated clinical abstracts, fields: `drug`, `sample_size`, `outcome`), head-to-head against LangExtract using `gemma4:e4b` via Ollama. 3 runs × 155 samples, temp=0.3, optimized prompt (3 iter), LLM semantic judge on `drug` and `outcome`.
+
+| | veritract | LangExtract |
+|---|---|---|
+| Field accuracy | **87.7% ± 0.3%** | 84.7% ± 1.9% |
+| Extraction latency | 28.9s | **5.5s** |
+| Verification cost | +5.4s | +0.2s |
+| Grounded (has span) | **90.3%** | 85.7% |
+| Quarantined | 9.7% | 0%† |
+| Missing (not extracted) | 0% | ~14.3% |
+| Quarantine precision | **100%** | — |
+| Quarantine recall | 79% | — |
+
+†LangExtract skips fields it can't answer; veritract's GBNF grammar always emits all schema fields, so unconfident extractions surface as quarantined rather than missing.
+
+Quarantine precision 100%: every quarantined field was genuinely wrong. Quarantine recall 79%: the remaining 21% of wrong fields were "grounded hallucinations" — real phrases extracted from the source text but for the wrong field.
+
+See [`benchmarks/benchmark.md`](benchmarks/benchmark.md) for full methodology, provenance breakdown, and run-by-run history.
+
 ## License
 
 MIT
