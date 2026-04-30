@@ -6,10 +6,47 @@ LLM extraction where every field earns its place: fuzzy-matched to source text,
 LLM-re-verified if fuzzy fails, quarantined if neither passes. Typed provenance
 on every field. Works with any Ollama-served model.
 
+## Prerequisites
+
+**Python 3.10+** and **[Ollama](https://ollama.com)** running locally.
+
+1. Install Ollama: https://ollama.com/download  
+2. Pull a model (gemma4 recommended for best results, gemma3 for lower memory):
+
+```bash
+ollama pull gemma4:e4b    # ~9 GB — best accuracy
+ollama pull gemma3:12b    # ~8 GB — good balance
+ollama pull gemma3:4b     # ~3 GB — fastest, lower accuracy
+```
+
+3. Verify Ollama is running:
+
+```bash
+ollama list
+```
+
+Ollama must be running before you call `LLMClient`. Start it with `ollama serve` if needed.
+
 ## Install
 
 ```bash
 pip install veritract
+```
+
+**With PDF extraction support** (adds [docling](https://github.com/docling-project/docling) — handles text, tables, and scanned pages):
+
+```bash
+pip install 'veritract[pdf]'
+```
+
+**From source:**
+
+```bash
+git clone https://github.com/LanGuo/veritract.git
+cd veritract
+pip install -e .          # core
+pip install -e '.[pdf]'   # with PDF support
+pip install -e '.[dev]'   # with test dependencies
 ```
 
 ## Quick start
@@ -141,7 +178,8 @@ regex-based repair.
 | Symbol | Description |
 |---|---|
 | `extract(text, schema, llm, *, mode, prompt, examples, images, doc_id, source_type, thresholds)` | One-call extraction + grounding |
-| `extract_raw(text, schema, llm, *, prompt, examples, images, doc_id, source_type)` | LLM call only → `RawExtractionResult` |
+| `extract_raw(text, schema, llm, *, prompt, examples, images, doc_id, source_type, max_text_chars)` | LLM call only → `RawExtractionResult` |
+| `extract_pdf(path, schema, llm, *, chunk_size, chunk_overlap, mode, prompt, examples, thresholds)` | Extract from a PDF file via docling; requires `pip install 'veritract[pdf]'` |
 | `ground(raw, llm, *, mode, thresholds)` | Grounding only on a `RawExtractionResult` |
 | `optimize_prompt(examples, schema, llm, *, n_iter, n_sample, ground_truth, seed)` | Iterative prompt refinement |
 | `load_images_b64(paths)` | Load image files as base64 PNG for multimodal extraction |
