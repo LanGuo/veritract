@@ -10,6 +10,11 @@ from veritract.grounding import ExtractionGrounder
 _HAS_WORD = re.compile(r"\w{2,}")
 # Strip leading/trailing non-word noise that GBNF sometimes prepends/appends.
 _STRIP_NOISE = re.compile(r'^[\s\W]+|[\s\W]+$')
+# Model outputs these when a field is absent instead of returning "".
+_EMPTY_SENTINEL = re.compile(
+    r'^(empty\s+string|not\s+(found|provided|available|mentioned)|n/?a|none|null)$',
+    re.IGNORECASE,
+)
 
 _LLM_GROUND_CONFIDENCE = 80.0
 
@@ -28,16 +33,18 @@ def _build_prompt(
     schema: dict,
     prompt: str | None,
     examples: list[dict] | None = None,
+    max_text_chars: int | None = 6000,
 ) -> str:
+    body = text if max_text_chars is None else text[:max_text_chars]
     if prompt is not None:
-        return prompt
+        return f"{prompt}\n\nText:\n{body}"
     fields = list(schema.get("properties", {}).keys())
     fields_str = ", ".join(fields)
     parts = [
         f"Extract the following fields from the text below.\n"
         f"Rules:\n"
         f"- Copy the exact verbatim phrase from the text. Do not paraphrase, abbreviate, or synthesise.\n"
-        f"- If a field is not present in the text, use an empty string.\n"
+        f'- If a field is not present in the text, return "".\n'
         f"Return JSON with exactly these fields: {fields_str}.",
     ]
     if examples:
@@ -48,7 +55,7 @@ def _build_prompt(
             ex_fields = {f: ex.get("fields", {}).get(f, "") for f in fields}
             parts.append(f"\nText:\n{ex_text}\nOutput: {_json.dumps(ex_fields)}")
         parts.append("\nNow extract from the text below.")
-    parts.append(f"\nText:\n{text[:6000]}")
+    parts.append(f"\nText:\n{body}")
     return "\n".join(parts)
 
 
@@ -135,6 +142,8 @@ def _sanitize_raw_values(
         if not isinstance(v, str):
             continue
         cleaned = _STRIP_NOISE.sub("", v)
+        if _EMPTY_SENTINEL.match(cleaned):
+            continue  # model said "empty string" / "N/A" / etc — treat as absent
         if _HAS_WORD.search(cleaned):
             valid[k] = cleaned
         else:
@@ -168,6 +177,7 @@ def extract_raw(
     images: list[str] | None = None,
     doc_id: str | None = None,
     source_type: str = "text",
+    max_text_chars: int | None = 6000,
 ) -> "RawExtractionResult":
     """Call the LLM and return sanitized field values without source verification.
 
@@ -176,7 +186,7 @@ def extract_raw(
     strategies or save raw outputs for offline analysis.
     """
     from veritract.types import RawExtractionResult
-    content = _build_prompt(text, schema, prompt, examples)
+    content = _build_prompt(text, schema, prompt, examples, max_text_chars)
     message: dict = {"role": "user", "content": content}
     if images:
         message["images"] = images

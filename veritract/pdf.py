@@ -5,6 +5,15 @@ from pathlib import Path
 from veritract.extraction import extract_raw, ground
 from veritract.types import RawExtractionResult, QuarantinedField, ExtractionResult
 
+
+def _phrase_score(value: str) -> int:
+    """Lower score = preferred. Penalises multi-clause values and very long strings.
+
+    Single verbatim phrases ("27B", "128K tokens", "GRPO") score 0.
+    Sentences and paragraph fragments score higher and lose to compact values.
+    """
+    return value.count(". ") + value.count("\n") + (1 if len(value) > 200 else 0)
+
 # Try to import DocumentConverter, but allow it to be None for lazy loading/mocking
 try:
     from docling.document_converter import DocumentConverter
@@ -52,8 +61,15 @@ def _merge_raw_results(
     merged_garbage: list[QuarantinedField] = []
     for raw in raw_results:
         for field, value in raw.fields.items():
-            if value and len(value) > len(merged_fields.get(field, "")):
+            if not value:
+                continue
+            current = merged_fields.get(field, "")
+            if not current:
                 merged_fields[field] = value
+            elif _phrase_score(value) < _phrase_score(current):
+                merged_fields[field] = value  # fewer clause breaks wins
+            elif _phrase_score(value) == _phrase_score(current) and len(value) > len(current):
+                merged_fields[field] = value  # same score: longer wins
         merged_garbage.extend(raw.garbage)
     return RawExtractionResult(
         fields=merged_fields,
@@ -98,6 +114,7 @@ def extract_pdf(
             examples=examples,
             doc_id=doc_id,
             source_type="pdf",
+            max_text_chars=None,  # chunk_size already controls window; don't truncate again
         )
         raw_results.append(raw)
 

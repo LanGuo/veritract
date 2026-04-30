@@ -26,7 +26,8 @@ SCHEMA = {
 def test_build_prompt_uses_custom_prompt():
     custom = "My custom prompt."
     result = _build_prompt("hello", SCHEMA, custom)
-    assert result == custom
+    assert result.startswith(custom)
+    assert "hello" in result
 
 
 def test_build_prompt_generates_from_schema():
@@ -52,8 +53,9 @@ def test_build_prompt_examples_ignored_when_prompt_provided():
     examples = [{"text": "irrelevant", "fields": {"sample_size": "irrelevant"}}]
     custom = "My custom prompt."
     result = _build_prompt("hello", SCHEMA, custom, examples)
-    assert result == custom
+    assert result.startswith(custom)
     assert "irrelevant" not in result
+    assert "hello" in result
 
 
 # --- _locate_span ---
@@ -276,6 +278,28 @@ def test_sanitize_skips_non_strings():
     valid, garbage = _sanitize_raw_values({"count": 42, "name": "valid"})
     assert "count" not in valid
     assert valid["name"] == "valid"
+
+
+def test_sanitize_drops_empty_string_sentinel():
+    # Model output "Empty string" instead of "" — should be silently discarded
+    for sentinel in ["Empty string", "empty string", "N/A", "n/a", "Not found",
+                     "not provided", "None", "null", "not available", "not mentioned"]:
+        valid, garbage = _sanitize_raw_values({"field": sentinel})
+        assert "field" not in valid, f"sentinel {sentinel!r} should be dropped"
+        assert garbage == [], f"sentinel {sentinel!r} should not be quarantined"
+
+
+def test_build_prompt_max_text_chars_truncates():
+    long_text = "x" * 10000
+    result = _build_prompt(long_text, SCHEMA, None, max_text_chars=100)
+    assert "x" * 100 in result
+    assert "x" * 101 not in result
+
+
+def test_build_prompt_max_text_chars_none_no_truncation():
+    long_text = "z" * 10000
+    result = _build_prompt(long_text, SCHEMA, None, max_text_chars=None)
+    assert "z" * 10000 in result
 
 
 def test_extract_garbage_value_quarantined():

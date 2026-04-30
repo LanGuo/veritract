@@ -87,6 +87,24 @@ def test_merge_empty_list():
     assert merged.source_text == "doc"
 
 
+def test_merge_prefers_compact_over_verbose():
+    from veritract.pdf import _merge_raw_results
+    # Sentence fragment (has ". ") loses to compact value (no ". ")
+    r1 = _raw({"context_length": "We extend to 128K. This enables long-form reasoning."})
+    r2 = _raw({"context_length": "128K"})
+    merged = _merge_raw_results([r1, r2], full_text="full", doc_id="f.pdf")
+    assert merged.fields["context_length"] == "128K"
+
+
+def test_merge_same_score_longer_wins():
+    from veritract.pdf import _merge_raw_results
+    # Both single-phrase (score 0): longer wins as tiebreak
+    r1 = _raw({"drug": "aspirin"})
+    r2 = _raw({"drug": "aspirin 100mg daily"})
+    merged = _merge_raw_results([r1, r2], full_text="full", doc_id="f.pdf")
+    assert merged.fields["drug"] == "aspirin 100mg daily"
+
+
 # --- extract_pdf ---
 
 from unittest.mock import MagicMock, patch
