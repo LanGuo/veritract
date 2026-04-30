@@ -98,11 +98,22 @@ def test_merge_prefers_compact_over_verbose():
 
 def test_merge_same_score_longer_wins():
     from veritract.pdf import _merge_raw_results
-    # Both single-phrase (score 0): longer wins as tiebreak
+    # Both single-phrase (score 0), same frequency: longer wins as tiebreak
     r1 = _raw({"drug": "aspirin"})
     r2 = _raw({"drug": "aspirin 100mg daily"})
     merged = _merge_raw_results([r1, r2], full_text="full", doc_id="f.pdf")
     assert merged.fields["drug"] == "aspirin 100mg daily"
+
+
+def test_merge_frequency_beats_length():
+    from veritract.pdf import _merge_raw_results
+    # "36 trillion" appears in 3 chunks; "hundreds of billions" in 1 — frequency wins
+    r1 = _raw({"pretraining_token_count": "36 trillion"})
+    r2 = _raw({"pretraining_token_count": "hundreds of billions"})
+    r3 = _raw({"pretraining_token_count": "36 trillion"})
+    r4 = _raw({"pretraining_token_count": "36 trillion"})
+    merged = _merge_raw_results([r1, r2, r3, r4], full_text="full", doc_id="f.pdf")
+    assert merged.fields["pretraining_token_count"] == "36 trillion"
 
 
 # --- extract_pdf ---

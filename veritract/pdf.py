@@ -57,20 +57,26 @@ def _merge_raw_results(
             fields={}, garbage=[], source_text=full_text,
             doc_id=doc_id, source_type="pdf",
         )
-    merged_fields: dict[str, str] = {}
+    # Collect all candidate values per field with occurrence counts.
+    counts: dict[str, dict[str, int]] = {}
     merged_garbage: list[QuarantinedField] = []
     for raw in raw_results:
         for field, value in raw.fields.items():
             if not value:
                 continue
-            current = merged_fields.get(field, "")
-            if not current:
-                merged_fields[field] = value
-            elif _phrase_score(value) < _phrase_score(current):
-                merged_fields[field] = value  # fewer clause breaks wins
-            elif _phrase_score(value) == _phrase_score(current) and len(value) > len(current):
-                merged_fields[field] = value  # same score: longer wins
+            counts.setdefault(field, {})
+            counts[field][value] = counts[field].get(value, 0) + 1
         merged_garbage.extend(raw.garbage)
+
+    # Rank candidates: lower phrase_score first, then higher frequency, then longer.
+    merged_fields: dict[str, str] = {}
+    for field, value_counts in counts.items():
+        best = max(
+            value_counts,
+            key=lambda v: (-_phrase_score(v), value_counts[v], len(v)),
+        )
+        merged_fields[field] = best
+
     return RawExtractionResult(
         fields=merged_fields,
         garbage=merged_garbage,
