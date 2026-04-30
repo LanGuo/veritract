@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from veritract.types import RawExtractionResult, QuarantinedField
+from veritract.extraction import extract_raw, ground
+from veritract.types import RawExtractionResult, QuarantinedField, ExtractionResult
+
+# Try to import DocumentConverter, but allow it to be None for lazy loading/mocking
+try:
+    from docling.document_converter import DocumentConverter
+except ImportError:
+    DocumentConverter = None  # type: ignore
 
 _DOCLING_IMPORT_MSG = (
     "docling is required for PDF extraction: "
@@ -55,3 +62,44 @@ def _merge_raw_results(
         doc_id=doc_id,
         source_type="pdf",
     )
+
+
+def extract_pdf(
+    path,
+    schema: dict,
+    llm,
+    *,
+    chunk_size: int = 4000,
+    chunk_overlap: int = 200,
+    mode: str = "full",
+    prompt: str | None = None,
+    examples: list | None = None,
+    thresholds: dict | None = None,
+) -> ExtractionResult:
+    """Extract structured fields from a PDF file using docling for PDF→markdown conversion.
+
+    Requires: pip install 'veritract[pdf]'
+    """
+    if DocumentConverter is None:
+        _require_docling()
+
+    doc_id = Path(path).name
+    converter = DocumentConverter()
+    doc_result = converter.convert(str(path))
+    full_text = doc_result.document.export_to_markdown()
+
+    raw_results = []
+    for chunk_text, _ in _chunk_text(full_text, chunk_size, chunk_overlap):
+        raw = extract_raw(
+            chunk_text,
+            schema,
+            llm,
+            prompt=prompt,
+            examples=examples,
+            doc_id=doc_id,
+            source_type="pdf",
+        )
+        raw_results.append(raw)
+
+    merged = _merge_raw_results(raw_results, full_text=full_text, doc_id=doc_id)
+    return ground(merged, llm, mode=mode, thresholds=thresholds)
