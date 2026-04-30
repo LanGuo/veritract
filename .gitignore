@@ -7,3 +7,4 @@ benchmarks/*_cache.json
 benchmarks/results_*.json
 benchmarks/result_logs.md
 docs/superpowers/
+.github/workflows/publish.yml
