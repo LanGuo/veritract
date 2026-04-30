@@ -178,3 +178,8 @@ def test_extract_pdf_multi_chunk_merges_best_value():
 
     assert result.extracted["drug"]["value"] == "aspirin 100mg"
     assert result.extracted["sample_size"]["value"] == "234 patients enrolled"
+
+
+def test_extract_pdf_importable_from_veritract():
+    from veritract import extract_pdf
+    assert callable(extract_pdf)
