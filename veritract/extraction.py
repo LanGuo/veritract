@@ -187,6 +187,17 @@ def extract_raw(
     """
     from veritract.types import RawExtractionResult
     content = _build_prompt(text, schema, prompt, examples, max_text_chars)
+    # For multimodal calls: prepend an image-first preamble so attention flows
+    # image→text (best practice for vision-language models). The image token
+    # budget hint (~256 tokens) prevents over-spending on small/simple figures.
+    if images:
+        n = len(images)
+        img_label = "image" if n == 1 else f"{n} images"
+        content = (
+            f"<image_input>\nAnalyze the {img_label} carefully before reading "
+            f"the instructions below. Use up to 256 image tokens.\n</image_input>\n\n"
+            + content
+        )
     message: dict = {"role": "user", "content": content}
     if images:
         message["images"] = images

@@ -145,10 +145,8 @@ def optimize_prompt(
             source = ex["text"]
             gt = ground_truth[idx] if ground_truth is not None else None
 
-            eval_prompt = current_prompt + f"\n\nText:\n{source[:6000]}"
-
             try:
-                result = extract(source, schema, llm, prompt=eval_prompt, mode="fuzzy")
+                result = extract(source, schema, llm, prompt=current_prompt, mode="fuzzy")
             except Exception:
                 scores.append(0.0)
                 continue

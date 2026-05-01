@@ -109,6 +109,25 @@ result_none   = ground(raw, llm, mode="no-grounding") # raw values, no verificat
 Separating the two stages means you pay for LLM inference once and can apply
 multiple grounding strategies — or compare them — without re-running the model.
 
+## Multimodal (image) extraction
+
+Pass images alongside text for models that support vision (e.g. `gemma4:e4b`):
+
+```python
+from veritract import extract, load_images_b64
+
+images = load_images_b64(["figure1.png", "figure2.png"])
+result = extract(caption_text, schema, llm, images=images)
+```
+
+When images are provided, veritract prepends an image-first preamble to the
+prompt so the model processes visual content before reading the extraction
+instructions — following best practice for vision-language attention.
+
+For extracting from PDF figures, ground against the **full document text** (not
+just the caption) so values visible in a figure but discussed in the paper body
+can be verified. See [`examples/extract_figures.py`](examples/extract_figures.py).
+
 ## Verification modes
 
 | Mode | Grounding | LLM re-verify | When to use |

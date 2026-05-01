@@ -8,3 +8,9 @@ benchmarks/results_*.json
 benchmarks/result_logs.md
 docs/superpowers/
 .github/workflows/publish.yml
+.DS_Store
+comparables.md
+/extract_figures.py
+/extract_llm_reports.py
+/save_figure_results.py
+figure_extraction_results.html
