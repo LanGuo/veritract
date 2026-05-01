@@ -45,23 +45,27 @@ class ExtractionGrounder:
         value_lower = value.lower()
         source_lower = source_text.lower()
 
+        # Always try exact substring first — gives the tightest possible span.
+        if value_lower in source_lower:
+            idx = source_lower.index(value_lower)
+            return GroundedField(
+                value=value,
+                span=Span(
+                    doc_id=doc_id,
+                    source_type=source_type,
+                    char_start=idx,
+                    char_end=idx + len(value),
+                    text=source_text[idx: idx + len(value)],
+                    provenance_type="direct",
+                ),
+                confidence=100.0,
+            )
+
+        # Short values that don't appear verbatim cannot be grounded by fuzzy.
         if len(value) < self._short_value_chars:
-            if value_lower in source_lower:
-                idx = source_lower.index(value_lower)
-                return GroundedField(
-                    value=value,
-                    span=Span(
-                        doc_id=doc_id,
-                        source_type=source_type,
-                        char_start=idx,
-                        char_end=idx + len(value),
-                        text=source_text[idx: idx + len(value)],
-                        provenance_type="direct",
-                    ),
-                    confidence=100.0,
-                )
             return None
 
+        # Longer values: fuzzy window search across sentence triples.
         overall_score = fuzz.token_set_ratio(value_lower, source_lower)
         if overall_score < threshold:
             return None
@@ -86,6 +90,25 @@ class ExtractionGrounder:
                 best_start = offsets[i]
                 end_idx = min(i + window_size - 1, len(sentences) - 1)
                 best_end = offsets[end_idx] + len(sentences[end_idx])
+
+        # Tighten: if the value appears verbatim inside the fuzzy window, use
+        # that exact location instead of the full multi-sentence window.
+        window_lower = source_lower[best_start:best_end]
+        if value_lower in window_lower:
+            local_idx = window_lower.index(value_lower)
+            exact_start = best_start + local_idx
+            return GroundedField(
+                value=value,
+                span=Span(
+                    doc_id=doc_id,
+                    source_type=source_type,
+                    char_start=exact_start,
+                    char_end=exact_start + len(value),
+                    text=source_text[exact_start: exact_start + len(value)],
+                    provenance_type="direct",
+                ),
+                confidence=100.0,
+            )
 
         return GroundedField(
             value=value,
