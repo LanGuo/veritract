@@ -35,6 +35,7 @@ Issues = "https://github.com/languo/veritract/issues"
 [project.optional-dependencies]
 dev = ["pytest>=8.0.0", "hatch>=1.12.0"]
 pdf = ["docling>=2.0.0"]
+benchmark = ["langextract>=1.2.0"]
 
 [tool.hatch.build.targets.sdist]
 exclude = ["venv", "dist", "docs", ".github"]

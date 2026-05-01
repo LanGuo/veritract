@@ -38,6 +38,7 @@ python3 -m venv venv
 source venv/bin/activate          # Windows: venv\Scripts\activate
 pip install -e .                  # core
 pip install -e '.[pdf]'           # with PDF + figure support (adds docling)
+pip install -e '.[benchmark]'     # with LangExtract for demo/benchmark comparison
 pip install -e '.[dev]'           # with test dependencies
 ```
 
