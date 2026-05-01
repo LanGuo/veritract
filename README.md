@@ -29,25 +29,17 @@ Ollama must be running before you call `LLMClient`. Start it with `ollama serve`
 
 ## Install
 
-```bash
-pip install veritract
-```
-
-**With PDF extraction support** (adds [docling](https://github.com/docling-project/docling) — handles text, tables, and scanned pages):
-
-```bash
-pip install 'veritract[pdf]'
-```
-
-**From source:**
+veritract is not yet on PyPI. Install from source:
 
 ```bash
 git clone https://github.com/LanGuo/veritract.git
 cd veritract
 pip install -e .          # core
-pip install -e '.[pdf]'   # with PDF support
+pip install -e '.[pdf]'   # with PDF + figure support (adds docling)
 pip install -e '.[dev]'   # with test dependencies
 ```
+
+**With PDF extraction support** — adds [docling](https://github.com/docling-project/docling) which handles text, tables, and scanned pages via OCR.
 
 ## Quick start
 
