@@ -97,6 +97,34 @@ def test_ground_extracted_data_skips_empty_values():
     assert not any(q["field_name"] == "missing_field" for q in quarantined)
 
 
+def test_exact_match_with_newline_in_source():
+    # LLM normalises "atorvastatin\n40 mg daily" to "atorvastatin 40 mg daily"
+    # The grounding should find it as direct despite the whitespace difference.
+    source = (
+        "The trial evaluated atorvastatin\n40 mg daily versus placebo in 486 patients.\n"
+        "The primary endpoint was reduction in\nLDL-cholesterol from baseline."
+    )
+    grounder = ExtractionGrounder()
+    result = grounder.ground_field("drug", "atorvastatin 40 mg daily", source, source_type="text")
+    assert result is not None
+    assert result["span"]["provenance_type"] == "direct"
+    assert result["span"]["char_end"] - result["span"]["char_start"] < 50  # tight span
+
+
+def test_exact_match_long_value_with_internal_newline():
+    source = (
+        "The primary endpoint was reduction in\nLDL-cholesterol from baseline, "
+        "which decreased by 43%."
+    )
+    grounder = ExtractionGrounder()
+    result = grounder.ground_field(
+        "primary_outcome", "reduction in LDL-cholesterol from baseline", source, source_type="text"
+    )
+    assert result is not None
+    assert result["span"]["provenance_type"] == "direct"
+    assert result["span"]["char_end"] - result["span"]["char_start"] < 60  # tight span
+
+
 def test_ground_extracted_data_skips_non_string_values():
     grounder = ExtractionGrounder()
     data = {"sample_size": "248", "count": 42}  # type: ignore

@@ -10,6 +10,30 @@ _DEFAULT_THRESHOLD = 80
 _SHORT_VALUE_CHARS = 20
 
 
+def _ws_pattern(value: str) -> re.Pattern:
+    """Regex that matches value with any whitespace (space/newline) between words.
+
+    Handles the common case where the LLM normalises line-wrapped source text
+    (e.g. "atorvastatin\n40 mg" → "atorvastatin 40 mg") before returning it.
+    """
+    return re.compile(r"\s+".join(re.escape(w) for w in value.split()), re.IGNORECASE)
+
+
+def _find_exact(value: str, source_text: str) -> tuple[int, int] | None:
+    """Return (start, end) for an exact or whitespace-flexible match, or None."""
+    value_lower = value.lower()
+    source_lower = source_text.lower()
+    # Literal match (fastest path)
+    if value_lower in source_lower:
+        idx = source_lower.index(value_lower)
+        return idx, idx + len(value)
+    # Whitespace-flexible match (value tokens separated by any \s+)
+    m = _ws_pattern(value).search(source_text)
+    if m:
+        return m.start(), m.end()
+    return None
+
+
 class ExtractionGrounder:
     """Grounds extracted field values against source text using fuzzy matching.
 
@@ -45,18 +69,16 @@ class ExtractionGrounder:
         value_lower = value.lower()
         source_lower = source_text.lower()
 
-        # Always try exact substring first — gives the tightest possible span.
-        if value_lower in source_lower:
-            idx = source_lower.index(value_lower)
+        # Try exact / whitespace-flexible match first — tightest possible span.
+        exact = _find_exact(value, source_text)
+        if exact:
+            s, e = exact
             return GroundedField(
                 value=value,
                 span=Span(
-                    doc_id=doc_id,
-                    source_type=source_type,
-                    char_start=idx,
-                    char_end=idx + len(value),
-                    text=source_text[idx: idx + len(value)],
-                    provenance_type="direct",
+                    doc_id=doc_id, source_type=source_type,
+                    char_start=s, char_end=e,
+                    text=source_text[s:e], provenance_type="direct",
                 ),
                 confidence=100.0,
             )
@@ -91,21 +113,16 @@ class ExtractionGrounder:
                 end_idx = min(i + window_size - 1, len(sentences) - 1)
                 best_end = offsets[end_idx] + len(sentences[end_idx])
 
-        # Tighten: if the value appears verbatim inside the fuzzy window, use
-        # that exact location instead of the full multi-sentence window.
-        window_lower = source_lower[best_start:best_end]
-        if value_lower in window_lower:
-            local_idx = window_lower.index(value_lower)
-            exact_start = best_start + local_idx
+        # Tighten: try exact/ws-flexible match within the fuzzy window.
+        window_exact = _find_exact(value, source_text[best_start:best_end])
+        if window_exact:
+            s, e = best_start + window_exact[0], best_start + window_exact[1]
             return GroundedField(
                 value=value,
                 span=Span(
-                    doc_id=doc_id,
-                    source_type=source_type,
-                    char_start=exact_start,
-                    char_end=exact_start + len(value),
-                    text=source_text[exact_start: exact_start + len(value)],
-                    provenance_type="direct",
+                    doc_id=doc_id, source_type=source_type,
+                    char_start=s, char_end=e,
+                    text=source_text[s:e], provenance_type="direct",
                 ),
                 confidence=100.0,
             )
@@ -113,12 +130,9 @@ class ExtractionGrounder:
         return GroundedField(
             value=value,
             span=Span(
-                doc_id=doc_id,
-                source_type=source_type,
-                char_start=best_start,
-                char_end=best_end,
-                text=source_text[best_start:best_end],
-                provenance_type="paraphrased",
+                doc_id=doc_id, source_type=source_type,
+                char_start=best_start, char_end=best_end,
+                text=source_text[best_start:best_end], provenance_type="paraphrased",
             ),
             confidence=overall_score,
         )
