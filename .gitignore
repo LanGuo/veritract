@@ -14,3 +14,6 @@ comparables.md
 /extract_llm_reports.py
 /save_figure_results.py
 figure_extraction_results.html
+/extract_episode40.py
+/episode40_results.json
+/episode40_results.html
