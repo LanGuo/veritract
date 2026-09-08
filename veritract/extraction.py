@@ -178,12 +178,17 @@ def extract_raw(
     doc_id: str | None = None,
     source_type: str = "text",
     max_text_chars: int | None = 6000,
+    manifest: dict | None = None,
 ) -> "RawExtractionResult":
     """Call the LLM and return sanitized field values without source verification.
 
     Use ground() on the returned RawExtractionResult to apply verification.
     This split lets you reuse the same LLM output across multiple grounding
     strategies or save raw outputs for offline analysis.
+
+    ``manifest``: an optional PipelineManifest (from ``veritract.build_manifest``).
+    When given, its ``manifest_id`` is stamped on the result and propagates through
+    ``ground()`` for point-in-time reproducibility (see docs/reproducibility.md).
     """
     from veritract.types import RawExtractionResult
     content = _build_prompt(text, schema, prompt, examples, max_text_chars)
@@ -209,6 +214,7 @@ def extract_raw(
         source_text=text,
         doc_id=doc_id,
         source_type=source_type,
+        manifest_id=manifest["manifest_id"] if manifest else None,
     )
 
 
@@ -239,7 +245,9 @@ def ground(
             k: GroundedField(value=v, span=None, confidence=100.0)
             for k, v in raw.fields.items()
         }
-        return ExtractionResult(extracted=extracted, quarantined=raw.garbage)
+        return ExtractionResult(
+            extracted=extracted, quarantined=raw.garbage, manifest_id=raw.manifest_id
+        )
 
     grounder = ExtractionGrounder(thresholds=thresholds)
     grounded, quarantined = grounder.ground_extracted_data(
@@ -257,7 +265,9 @@ def ground(
         grounded.update(promoted)
         quarantined = still_quarantined
 
-    return ExtractionResult(extracted=grounded, quarantined=quarantined)
+    return ExtractionResult(
+        extracted=grounded, quarantined=quarantined, manifest_id=raw.manifest_id
+    )
 
 
 _VERIFICATION_MODES = ("full", "fuzzy", "no-grounding")
@@ -277,6 +287,7 @@ def extract(
     grounding: bool | None = None,
     auto_reground: bool | None = None,
     thresholds: dict[str, int] | None = None,
+    manifest: dict | None = None,
 ) -> ExtractionResult:
     """Extract structured fields from text using an LLM with source verification.
 
@@ -330,6 +341,10 @@ def extract(
         auto_reground: Deprecated — use ``mode`` instead. If explicitly passed,
             overrides the LLM re-verification step implied by ``mode``.
         thresholds: Custom source_type → threshold mapping, overrides built-in defaults.
+        manifest: Optional PipelineManifest from ``veritract.build_manifest``. Its
+            ``manifest_id`` is stamped on the result; when ``thresholds`` is not given,
+            the manifest's thresholds are used. Enables ``veritract.replay`` for
+            point-in-time reproducibility (see docs/reproducibility.md).
 
     Returns:
         ExtractionResult with .extracted (grounded fields), .quarantined, and .provenance.
@@ -352,9 +367,13 @@ def extract(
     else:
         effective_mode = "full"
 
+    if manifest is not None and thresholds is None:
+        thresholds = manifest.get("thresholds")
+
     raw = extract_raw(
         text, schema, llm,
         prompt=prompt, examples=examples, images=images,
         doc_id=doc_id, source_type=source_type,
+        manifest=manifest,
     )
     return ground(raw, llm, mode=effective_mode, thresholds=thresholds)

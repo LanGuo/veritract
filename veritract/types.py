@@ -30,6 +30,7 @@ class QuarantinedField(TypedDict):
 class ExtractionResult:
     extracted: dict[str, GroundedField]
     quarantined: list[QuarantinedField]
+    manifest_id: str | None = None
 
     @property
     def provenance(self) -> list[Span]:
@@ -47,3 +48,4 @@ class RawExtractionResult:
     source_text: str
     doc_id: str | None
     source_type: str
+    manifest_id: str | None = None
