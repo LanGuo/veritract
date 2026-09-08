@@ -8,6 +8,7 @@ from typing import Any
 from typing_extensions import TypedDict
 
 from veritract.grounding import _DEFAULT_THRESHOLDS
+from veritract.llm import LLMClient
 
 
 class PipelineManifest(TypedDict):
@@ -102,3 +103,67 @@ def build_manifest(
         created_at=datetime.now(timezone.utc).isoformat(),
         **core,
     )
+
+
+def replay(
+    manifest: PipelineManifest,
+    inputs: list[dict],
+    *,
+    schema: dict,
+    prompt: str | None = None,
+    llm=None,
+) -> list:
+    """Re-execute past extractions under a manifest, deterministically.
+
+    Args:
+        manifest: A PipelineManifest from ``build_manifest``.
+        inputs: One dict per document — ``{"text": str, "doc_id": str | None,
+            "source_type": str}``. The manifest stores only hashes, never the
+            documents, so the caller must supply them again.
+        schema: The same schema the manifest was built with (verified by hash).
+        prompt: The same custom prompt, if one was used (verified by hash).
+        llm: An LLM client whose ``model_digest()`` matches the manifest. If
+            ``None``, an ``LLMClient`` is constructed from the manifest's
+            ``model_tag`` and ``decoding`` params.
+
+    Returns:
+        list[ExtractionResult] — one per input, each stamped with the manifest's id.
+
+    Raises:
+        ValueError: the passed ``schema`` / ``prompt`` do not match the manifest.
+        ManifestUnavailable: the pinned model digest cannot be resolved or differs.
+    """
+    from veritract.extraction import extract
+
+    if _sha(schema) != manifest["schema_hash"]:
+        raise ValueError("schema does not match manifest schema_hash — replay needs the original schema")
+    expected_prompt_hash = _sha(prompt) if prompt is not None else "default"
+    if expected_prompt_hash != manifest["prompt_hash"]:
+        raise ValueError("prompt does not match manifest prompt_hash — replay needs the original prompt")
+
+    if llm is None:
+        llm = LLMClient(model=manifest["model_tag"], **manifest.get("decoding", {}))
+
+    try:
+        actual_digest = llm.model_digest()
+    except RuntimeError as e:
+        raise ManifestUnavailable(
+            f"cannot resolve pinned model {manifest['model_tag']!r}: {e}"
+        ) from e
+    if actual_digest != manifest["model_digest"]:
+        raise ManifestUnavailable(
+            f"pinned model digest {manifest['model_digest']} is not available "
+            f"(current: {actual_digest})"
+        )
+
+    return [
+        extract(
+            item["text"], schema, llm,
+            prompt=prompt,
+            doc_id=item.get("doc_id"),
+            source_type=item.get("source_type", "text"),
+            thresholds=manifest["thresholds"],
+            manifest=manifest,
+        )
+        for item in inputs
+    ]

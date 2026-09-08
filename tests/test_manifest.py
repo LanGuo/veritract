@@ -99,3 +99,82 @@ def test_manifest_shape():
         "rule_versions", "created_at",
     ):
         assert key in m
+
+
+# --- replay (Task 4) ---
+
+
+def _replay_llm():
+    llm = MockLLM(model="gemma3:1b", seed=42)
+    llm.register("Extract the following fields", {"a": "alpha", "b": "beta"})
+    return llm
+
+
+def test_replay_reproduces_identical_results():
+    from veritract.manifest import replay
+    llm = _replay_llm()
+    manifest = build_manifest(llm, SCHEMA)
+    inputs = [{"text": "here alpha and also beta", "doc_id": "d1", "source_type": "text"}]
+    r1 = replay(manifest, inputs, schema=SCHEMA, llm=llm)
+    r2 = replay(manifest, inputs, schema=SCHEMA, llm=llm)
+    assert r1[0].manifest_id == manifest["manifest_id"]
+    assert r1[0].extracted.keys() == r2[0].extracted.keys()
+    assert all(
+        r1[0].extracted[k]["value"] == r2[0].extracted[k]["value"] for k in r1[0].extracted
+    )
+
+
+def test_replay_returns_one_result_per_input():
+    from veritract.manifest import replay
+    llm = _replay_llm()
+    manifest = build_manifest(llm, SCHEMA)
+    inputs = [
+        {"text": "alpha beta one", "doc_id": "d1", "source_type": "text"},
+        {"text": "alpha beta two", "doc_id": "d2", "source_type": "text"},
+    ]
+    out = replay(manifest, inputs, schema=SCHEMA, llm=llm)
+    assert len(out) == 2
+
+
+def test_replay_rejects_mismatched_schema():
+    from veritract.manifest import replay
+    manifest = build_manifest(_replay_llm(), SCHEMA)
+    with pytest.raises(ValueError, match="schema"):
+        replay(
+            manifest, [{"text": "x", "doc_id": None, "source_type": "text"}],
+            schema={"type": "object", "properties": {"z": {"type": "string"}}},
+            llm=_replay_llm(),
+        )
+
+
+def test_replay_rejects_mismatched_prompt():
+    from veritract.manifest import replay
+    manifest = build_manifest(_replay_llm(), SCHEMA)  # prompt=None → "default"
+    with pytest.raises(ValueError, match="prompt"):
+        replay(
+            manifest, [{"text": "x", "doc_id": None, "source_type": "text"}],
+            schema=SCHEMA, prompt="a custom prompt", llm=_replay_llm(),
+        )
+
+
+def test_replay_raises_manifest_unavailable_on_digest_mismatch():
+    from veritract.manifest import replay, ManifestUnavailable
+    manifest = dict(build_manifest(_replay_llm(), SCHEMA))
+    manifest["model_digest"] = "sha256:" + "f" * 64
+    with pytest.raises(ManifestUnavailable):
+        replay(
+            manifest, [{"text": "x", "doc_id": None, "source_type": "text"}],
+            schema=SCHEMA, llm=_replay_llm(),
+        )
+
+
+def test_replay_without_llm_unresolvable_model_raises_manifest_unavailable():
+    from veritract.manifest import replay, ManifestUnavailable
+    llm = MockLLM(model="veritract-not-a-real-model:v0")
+    llm.register("Extract the following fields", {"a": "alpha", "b": "beta"})
+    manifest = build_manifest(llm, SCHEMA)
+    with pytest.raises(ManifestUnavailable):
+        replay(
+            manifest, [{"text": "alpha beta", "doc_id": None, "source_type": "text"}],
+            schema=SCHEMA,  # llm=None → real LLMClient, model_digest() fails
+        )
