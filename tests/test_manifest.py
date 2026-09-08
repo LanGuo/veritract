@@ -168,6 +168,12 @@ def test_replay_raises_manifest_unavailable_on_digest_mismatch():
         )
 
 
+def test_public_api():
+    from veritract import build_manifest, replay, ManifestUnavailable, PipelineManifest
+    assert callable(build_manifest) and callable(replay)
+    assert issubclass(ManifestUnavailable, RuntimeError)
+
+
 def test_replay_without_llm_unresolvable_model_raises_manifest_unavailable():
     from veritract.manifest import replay, ManifestUnavailable
     llm = MockLLM(model="veritract-not-a-real-model:v0")

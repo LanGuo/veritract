@@ -170,6 +170,30 @@ llm = LLMClient(
 Sampling parameters are forwarded to Ollama at call time. Use `temperature=0.0`
 and a fixed `seed` for reproducible benchmarks or CI pipelines.
 
+## Point-in-time reproducibility
+
+Stamp an extraction with a `PipelineManifest` — a content hash over the model
+digest, decoding params, prompt, schema, and grounding thresholds — then
+reproduce it later with `replay()`:
+
+```python
+from veritract import build_manifest, extract, replay
+
+manifest = build_manifest(llm, schema)          # pins the model by Ollama digest
+result = extract(text, schema, llm, manifest=manifest)
+result.manifest_id                              # stamped on the result
+
+# ...later, from the stored manifest + inputs...
+inputs = [{"text": text, "doc_id": "doc:1", "source_type": "text"}]
+[reproduced] = replay(manifest, inputs, schema=schema)   # llm rebuilt from the manifest
+```
+
+`replay()` verifies the schema/prompt hashes, then resolves the pinned model by
+its content address — raising `ManifestUnavailable` if that exact model is gone.
+This is why the feature is Ollama-native: a hosted API model cannot be pinned or
+re-run. See [`docs/reproducibility.md`](docs/reproducibility.md) and
+[`examples/point_in_time_replay.py`](examples/point_in_time_replay.py).
+
 ## LLMClient
 
 ```python
@@ -191,16 +215,19 @@ regex-based repair.
 
 | Symbol | Description |
 |---|---|
-| `extract(text, schema, llm, *, mode, prompt, examples, images, doc_id, source_type, thresholds)` | One-call extraction + grounding |
-| `extract_raw(text, schema, llm, *, prompt, examples, images, doc_id, source_type, max_text_chars)` | LLM call only → `RawExtractionResult` |
+| `extract(text, schema, llm, *, mode, prompt, examples, images, doc_id, source_type, thresholds, manifest)` | One-call extraction + grounding |
+| `extract_raw(text, schema, llm, *, prompt, examples, images, doc_id, source_type, max_text_chars, manifest)` | LLM call only → `RawExtractionResult` |
 | `extract_pdf(path, schema, llm, *, chunk_size, chunk_overlap, mode, prompt, examples, thresholds)` | Extract from a PDF file via docling; requires `pip install 'veritract[pdf]'` |
 | `ground(raw, llm, *, mode, thresholds)` | Grounding only on a `RawExtractionResult` |
+| `build_manifest(llm, schema, *, prompt, thresholds, extra)` | Content-addressed `PipelineManifest` for the given settings |
+| `replay(manifest, inputs, *, schema, prompt, llm)` | Re-run past extractions under a manifest → `list[ExtractionResult]` |
 | `optimize_prompt(examples, schema, llm, *, n_iter, n_sample, ground_truth, seed)` | Iterative prompt refinement |
 | `load_images_b64(paths)` | Load image files as base64 PNG for multimodal extraction |
-| `LLMClient(model, max_retries, temperature, top_p, seed)` | Ollama wrapper with retry + GBNF |
+| `LLMClient(model, max_retries, temperature, top_p, seed)` | Ollama wrapper with retry + GBNF; `.model_digest()` for pinning |
 | `MockLLM()` | Deterministic stub for tests |
-| `ExtractionResult` | Dataclass: `extracted: dict[str, GroundedField]`, `quarantined: list[QuarantinedField]`, `.provenance` |
-| `RawExtractionResult` | Dataclass: `fields: dict[str, str]`, `garbage`, `source_text`, `doc_id`, `source_type` |
+| `ExtractionResult` | Dataclass: `extracted: dict[str, GroundedField]`, `quarantined: list[QuarantinedField]`, `manifest_id`, `.provenance` |
+| `RawExtractionResult` | Dataclass: `fields: dict[str, str]`, `garbage`, `source_text`, `doc_id`, `source_type`, `manifest_id` |
+| `PipelineManifest` | TypedDict: `manifest_id`, `model_digest`, `decoding`, `prompt_hash`, `schema_hash`, `thresholds`, … |
 | `GroundedField` | TypedDict: `value`, `span: Span \| None`, `confidence` |
 | `QuarantinedField` | TypedDict: `field_name`, `value`, `reason` |
 | `Span` | TypedDict: `doc_id`, `source_type`, `char_start`, `char_end`, `text`, `provenance_type` |
