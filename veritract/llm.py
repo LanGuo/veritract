@@ -60,6 +60,10 @@ class LLMClient:
             f"model {self.model!r} not found in Ollama; cannot pin its digest"
         )
 
+    def decoding_options(self) -> dict[str, Any]:
+        """Sampling params forwarded to Ollama (temperature / top_p / seed), if set."""
+        return dict(self._options)
+
     def chat(self, messages: list[dict], schema: dict | None = None, think: bool = False) -> dict:
         """Call Ollama and return parsed JSON (when schema given) or {"text": ...}.
 
@@ -100,8 +104,23 @@ class LLMClient:
 class MockLLM:
     """Deterministic LLM stub for tests. Register canned responses by prompt substring."""
 
-    def __init__(self):
+    def __init__(
+        self,
+        *,
+        model: str = "mock",
+        temperature: float | None = None,
+        top_p: float | None = None,
+        seed: int | None = None,
+    ):
         self._responses: list[tuple[str, dict]] = []
+        self.model = model
+        self._options: dict[str, Any] = {
+            k: v for k, v in {
+                "temperature": temperature,
+                "top_p": top_p,
+                "seed": seed,
+            }.items() if v is not None
+        }
 
     def register(self, prompt_contains: str, response: dict) -> None:
         self._responses.append((prompt_contains, response))
@@ -109,6 +128,9 @@ class MockLLM:
     def model_digest(self) -> str:
         """Fixed sentinel digest so manifests built with MockLLM are deterministic."""
         return "sha256:" + "0" * 64
+
+    def decoding_options(self) -> dict[str, Any]:
+        return dict(self._options)
 
     def chat(self, messages: list[dict], schema: dict | None = None, think: bool = False) -> dict:
         full_text = " ".join(m.get("content", "") for m in messages)
