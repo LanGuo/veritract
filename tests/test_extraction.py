@@ -442,3 +442,59 @@ def test_extract_raw_and_ground_importable_from_package():
     assert callable(er)
     assert callable(g)
     assert R is not None
+
+
+# --- manifest_id threading (Task 3: pipeline manifest) ---
+
+
+def _manifest_llm():
+    llm = MockLLM()
+    llm.register("sample_size", {
+        "sample_size": "248 patients",
+        "intervention": "metformin 500mg twice daily",
+        "primary_outcome": "HbA1c reduction at 12 months",
+    })
+    return llm
+
+
+def test_extract_stamps_manifest_id():
+    from veritract.manifest import build_manifest
+    llm = _manifest_llm()
+    manifest = build_manifest(llm, SCHEMA)
+    result = extract(SOURCE, SCHEMA, llm, manifest=manifest)
+    assert result.manifest_id == manifest["manifest_id"]
+
+
+def test_extract_without_manifest_has_none():
+    result = extract(SOURCE, SCHEMA, _manifest_llm())
+    assert result.manifest_id is None
+
+
+def test_extract_raw_stamps_manifest_id():
+    from veritract.extraction import extract_raw
+    from veritract.manifest import build_manifest
+    llm = _manifest_llm()
+    manifest = build_manifest(llm, SCHEMA)
+    raw = extract_raw(SOURCE, SCHEMA, llm, manifest=manifest)
+    assert raw.manifest_id == manifest["manifest_id"]
+
+
+def test_ground_carries_manifest_id_from_raw():
+    from veritract.extraction import extract_raw, ground
+    from veritract.manifest import build_manifest
+    llm = _manifest_llm()
+    manifest = build_manifest(llm, SCHEMA)
+    raw = extract_raw(SOURCE, SCHEMA, llm, manifest=manifest)
+    for mode in ("no-grounding", "fuzzy", "full"):
+        result = ground(raw, llm, mode=mode)
+        assert result.manifest_id == manifest["manifest_id"]
+
+
+def test_extract_manifest_defaults_thresholds():
+    """When a manifest is passed and thresholds are not, the manifest's thresholds are used."""
+    from veritract.manifest import build_manifest
+    llm = _manifest_llm()
+    manifest = build_manifest(llm, SCHEMA, thresholds={"text": 5})
+    # threshold 5 is trivially permissive — nothing should quarantine on a fuzzy miss
+    result = extract(SOURCE, SCHEMA, llm, manifest=manifest, mode="fuzzy")
+    assert result.manifest_id == manifest["manifest_id"]
