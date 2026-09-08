@@ -98,6 +98,11 @@ def _auto_llm_ground(
     for qf in quarantined:
         field_name = qf["field_name"]
         value = qf["value"]
+        if not value.strip():
+            # An empty / whitespace value cannot be "supported by source text".
+            # Keep it quarantined rather than spending an LLM call to resurrect it.
+            remaining.append(qf)
+            continue
         try:
             result = llm.chat([{
                 "role": "user",

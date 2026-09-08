@@ -418,6 +418,30 @@ def test_ground_full_promotes_via_llm():
     assert "intervention" in result.extracted
 
 
+def test_ground_full_does_not_promote_empty_quarantined_value():
+    """An empty/whitespace value can't be 'supported by source text' — _auto_llm_ground
+    must not resurrect it from quarantine even if the verifier LLM says supported."""
+    from veritract.types import QuarantinedField
+
+    raw = RawExtractionResult(
+        fields={"drug": "metformin"},
+        garbage=[
+            QuarantinedField(field_name="dose", value="", reason="no meaningful content"),
+            QuarantinedField(field_name="route", value="   ", reason="no meaningful content"),
+        ],
+        source_text="the patient takes metformin daily",
+        doc_id=None,
+        source_type="text",
+    )
+    llm = MockLLM()
+    llm.register("Verify whether", {"supported": True, "span": ""})  # would promote if asked
+    result = ground(raw, llm, mode="full")
+
+    assert "dose" not in result.extracted
+    assert "route" not in result.extracted
+    assert {q["field_name"] for q in result.quarantined} == {"dose", "route"}
+
+
 def test_ground_invalid_mode_raises():
     raw = _make_raw({"sample_size": "248 patients"})
     with pytest.raises(ValueError, match="mode must be one of"):
